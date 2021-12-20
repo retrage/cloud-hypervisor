@@ -291,13 +291,14 @@ pub enum VmState {
     Running,
     Shutdown,
     Paused,
+    BreakPoint,
 }
 
 impl VmState {
     fn valid_transition(self, new_state: VmState) -> Result<()> {
         match self {
             VmState::Created => match new_state {
-                VmState::Created | VmState::Shutdown => {
+                VmState::Created | VmState::Shutdown | VmState::BreakPoint => {
                     Err(Error::InvalidStateTransition(self, new_state))
                 }
                 VmState::Running | VmState::Paused => Ok(()),
@@ -307,21 +308,25 @@ impl VmState {
                 VmState::Created | VmState::Running => {
                     Err(Error::InvalidStateTransition(self, new_state))
                 }
-                VmState::Paused | VmState::Shutdown => Ok(()),
+                VmState::Paused | VmState::Shutdown | VmState::BreakPoint => Ok(()),
             },
 
             VmState::Shutdown => match new_state {
-                VmState::Paused | VmState::Created | VmState::Shutdown => {
+                VmState::Paused | VmState::Created | VmState::Shutdown | VmState::BreakPoint => {
                     Err(Error::InvalidStateTransition(self, new_state))
                 }
                 VmState::Running => Ok(()),
             },
 
             VmState::Paused => match new_state {
-                VmState::Created | VmState::Paused => {
+                VmState::Created | VmState::Paused | VmState::BreakPoint => {
                     Err(Error::InvalidStateTransition(self, new_state))
                 }
                 VmState::Running | VmState::Shutdown => Ok(()),
+            },
+            VmState::BreakPoint => match new_state {
+                VmState::Running => Ok(()),
+                _ => Err(Error::InvalidStateTransition(self, new_state)),
             },
         }
     }
@@ -2371,6 +2376,72 @@ impl Vm {
     pub fn memory_manager_data(&self) -> MemoryManagerSnapshotData {
         self.memory_manager.lock().unwrap().snapshot_data()
     }
+
+    pub fn debug_request(
+        &mut self,
+        gdb_request: &crate::gdb::GdbRequestPayload,
+    ) -> Result<crate::gdb::GdbResponsePayload> {
+        match gdb_request {
+            crate::gdb::GdbRequestPayload::EnableSingleStep => {
+                self.cpu_manager
+                    .lock()
+                    .unwrap()
+                    .set_guest_debug(&[], true)
+                    .map_err(Error::CpuManager)?;
+                return Ok(crate::gdb::GdbResponsePayload::Empty);
+            }
+            crate::gdb::GdbRequestPayload::SetHwBreakPoint(addrs) => {
+                self.cpu_manager
+                    .lock()
+                    .unwrap()
+                    .set_guest_debug(addrs, false)
+                    .map_err(Error::CpuManager)?;
+                return Ok(crate::gdb::GdbResponsePayload::Empty);
+            }
+            crate::gdb::GdbRequestPayload::Pause => {
+                self.pause().map_err(Error::Pause)?;
+                return Ok(crate::gdb::GdbResponsePayload::Empty);
+            }
+            crate::gdb::GdbRequestPayload::Resume => {
+                self.resume().map_err(Error::Resume)?;
+                return Ok(crate::gdb::GdbResponsePayload::Empty);
+            }
+            crate::gdb::GdbRequestPayload::ReadRegs => {
+                let regs = self
+                    .cpu_manager
+                    .lock()
+                    .unwrap()
+                    .read_registers()
+                    .map_err(Error::CpuManager)?;
+                return Ok(crate::gdb::GdbResponsePayload::RegValues(regs));
+            }
+            crate::gdb::GdbRequestPayload::WriteRegs(regs) => {
+                self.cpu_manager
+                    .lock()
+                    .unwrap()
+                    .write_registers(regs)
+                    .map_err(Error::CpuManager)?;
+                return Ok(crate::gdb::GdbResponsePayload::Empty);
+            }
+            crate::gdb::GdbRequestPayload::ReadMem(vaddr, len) => {
+                let mem = self
+                    .cpu_manager
+                    .lock()
+                    .unwrap()
+                    .read_memory(vaddr, len)
+                    .map_err(Error::CpuManager)?;
+                return Ok(crate::gdb::GdbResponsePayload::MemoryRegion(mem));
+            }
+            crate::gdb::GdbRequestPayload::WriteMem(vaddr, data) => {
+                self.cpu_manager
+                    .lock()
+                    .unwrap()
+                    .write_memory(vaddr, data)
+                    .map_err(Error::CpuManager)?;
+                return Ok(crate::gdb::GdbResponsePayload::Empty);
+            }
+        }
+    }
 }
 
 impl Pausable for Vm {
@@ -2694,6 +2765,7 @@ mod tests {
                 assert!(state.valid_transition(VmState::Running).is_ok());
                 assert!(state.valid_transition(VmState::Shutdown).is_err());
                 assert!(state.valid_transition(VmState::Paused).is_ok());
+                assert!(state.valid_transition(VmState::BreakPoint).is_err());
             }
             VmState::Running => {
                 // Check the transitions from Running
@@ -2701,6 +2773,7 @@ mod tests {
                 assert!(state.valid_transition(VmState::Running).is_err());
                 assert!(state.valid_transition(VmState::Shutdown).is_ok());
                 assert!(state.valid_transition(VmState::Paused).is_ok());
+                assert!(state.valid_transition(VmState::BreakPoint).is_ok());
             }
             VmState::Shutdown => {
                 // Check the transitions from Shutdown
@@ -2708,6 +2781,7 @@ mod tests {
                 assert!(state.valid_transition(VmState::Running).is_ok());
                 assert!(state.valid_transition(VmState::Shutdown).is_err());
                 assert!(state.valid_transition(VmState::Paused).is_err());
+                assert!(state.valid_transition(VmState::BreakPoint).is_err());
             }
             VmState::Paused => {
                 // Check the transitions from Paused
@@ -2715,6 +2789,15 @@ mod tests {
                 assert!(state.valid_transition(VmState::Running).is_ok());
                 assert!(state.valid_transition(VmState::Shutdown).is_ok());
                 assert!(state.valid_transition(VmState::Paused).is_err());
+                assert!(state.valid_transition(VmState::BreakPoint).is_err());
+            }
+            VmState::BreakPoint => {
+                // Check the transitions from Breakpoint
+                assert!(state.valid_transition(VmState::Created).is_err());
+                assert!(state.valid_transition(VmState::Running).is_ok());
+                assert!(state.valid_transition(VmState::Shutdown).is_err());
+                assert!(state.valid_transition(VmState::Paused).is_err());
+                assert!(state.valid_transition(VmState::BreakPoint).is_err());
             }
         }
     }

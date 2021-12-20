@@ -55,6 +55,7 @@ pub mod config;
 pub mod cpu;
 pub mod device_manager;
 pub mod device_tree;
+mod gdb;
 pub mod interrupt;
 pub mod memory_manager;
 pub mod migration;
@@ -143,6 +144,17 @@ pub enum Error {
     /// Error binding API server socket
     #[error("Error creation API server's socket {0:?}")]
     CreateApiServerSocket(#[source] io::Error),
+
+    #[error("Failed to start the GDB thread: {0}")]
+    GdbThreadSpawn(io::Error),
+
+    /// GDB request receive error
+    #[error("Error receiving GDB request: {0}")]
+    GdbRequestRecv(#[source] RecvError),
+
+    /// GDB response send error
+    #[error("Error sending GDB request: {0}")]
+    GdbResponseSend(#[source] SendError<gdb::GdbResponse>),
 }
 pub type Result<T> = result::Result<T, Error>;
 
@@ -153,6 +165,7 @@ pub enum EpollDispatch {
     Reset = 1,
     Api = 2,
     ActivateVirtioDevices = 3,
+    Debug = 4,
     Unknown,
 }
 
@@ -164,6 +177,7 @@ impl From<u64> for EpollDispatch {
             1 => Reset,
             2 => Api,
             3 => ActivateVirtioDevices,
+            4 => Debug,
             _ => Unknown,
         }
     }
@@ -233,10 +247,14 @@ pub fn start_vmm_thread(
     api_event: EventFd,
     api_sender: Sender<ApiRequest>,
     api_receiver: Receiver<ApiRequest>,
+    debug_event: EventFd,
+    gdb_sender: Sender<gdb::GdbRequest>,
+    gdb_receiver: Receiver<gdb::GdbRequest>,
     seccomp_action: &SeccompAction,
     hypervisor: Arc<dyn hypervisor::Hypervisor>,
 ) -> Result<thread::JoinHandle<Result<()>>> {
     let http_api_event = api_event.try_clone().map_err(Error::EventFdClone)?;
+    let gdb_debug_event = debug_event.try_clone().map_err(Error::EventFdClone)?;
 
     // Retrieve seccomp filter
     let vmm_seccomp_filter =
@@ -257,12 +275,13 @@ pub fn start_vmm_thread(
                 let mut vmm = Vmm::new(
                     vmm_version.to_string(),
                     api_event,
+                    debug_event,
                     vmm_seccomp_action,
                     hypervisor,
                     exit_evt,
                 )?;
 
-                vmm.control_loop(Arc::new(api_receiver))
+                vmm.control_loop(Arc::new(api_receiver), Arc::new(gdb_receiver))
             })
             .map_err(Error::VmmThreadSpawn)?
     };
@@ -285,6 +304,17 @@ pub fn start_vmm_thread(
             exit_evt,
         )?;
     }
+
+    let target = gdb::GdbStub::new(gdb_sender, gdb_debug_event);
+    thread::Builder::new()
+        .name("gdb".to_owned())
+        .spawn(move || {
+            gdb::gdb_thread(
+                target, 1234, /* TODO: Use supplied number from arguments */
+            )
+        })
+        .map_err(Error::GdbThreadSpawn)?;
+
     Ok(thread)
 }
 
@@ -301,6 +331,7 @@ pub struct Vmm {
     exit_evt: EventFd,
     reset_evt: EventFd,
     api_evt: EventFd,
+    debug_evt: EventFd,
     version: String,
     vm: Option<Vm>,
     vm_config: Option<Arc<Mutex<VmConfig>>>,
@@ -313,6 +344,7 @@ impl Vmm {
     fn new(
         vmm_version: String,
         api_evt: EventFd,
+        debug_evt: EventFd,
         seccomp_action: SeccompAction,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         exit_evt: EventFd,
@@ -337,11 +369,16 @@ impl Vmm {
             .add_event(&api_evt, EpollDispatch::Api)
             .map_err(Error::Epoll)?;
 
+        epoll
+            .add_event(&debug_evt, EpollDispatch::Debug)
+            .map_err(Error::Epoll)?;
+
         Ok(Vmm {
             epoll,
             exit_evt,
             reset_evt,
             api_evt,
+            debug_evt,
             version: vmm_version,
             vm: None,
             vm_config: None,
@@ -1274,7 +1311,22 @@ impl Vmm {
         })
     }
 
-    fn control_loop(&mut self, api_receiver: Arc<Receiver<ApiRequest>>) -> Result<()> {
+    fn vm_debug_request(
+        &mut self,
+        gdb_request: &gdb::GdbRequestPayload,
+    ) -> result::Result<gdb::GdbResponsePayload, VmError> {
+        if let Some(ref mut vm) = self.vm {
+            vm.debug_request(gdb_request)
+        } else {
+            Err(VmError::VmNotRunning)
+        }
+    }
+
+    fn control_loop(
+        &mut self,
+        api_receiver: Arc<Receiver<ApiRequest>>,
+        gdb_receiver: Arc<Receiver<gdb::GdbRequest>>,
+    ) -> Result<()> {
         const EPOLL_EVENTS_LEN: usize = 100;
 
         let mut events = vec![epoll::Event::new(epoll::Events::empty(), 0); EPOLL_EVENTS_LEN];
@@ -1542,6 +1594,23 @@ impl Vmm {
                                 sender.send(response).map_err(Error::ApiResponseSend)?;
                             }
                         }
+                    }
+                    EpollDispatch::Debug => {
+                        // Consume the event.
+                        self.debug_evt.read().map_err(Error::EventFdRead)?;
+
+                        // Read from the API receiver channel
+                        let gdb_request = gdb_receiver.recv().map_err(Error::GdbRequestRecv)?;
+
+                        info!("GDB request event: {:?}", gdb_request);
+                        let response = self
+                            .vm_debug_request(&gdb_request.payload)
+                            .map_err(gdb::Error::GdbRequestError);
+
+                        gdb_request
+                            .sender
+                            .send(response)
+                            .map_err(Error::GdbResponseSend)?;
                     }
                 }
             }

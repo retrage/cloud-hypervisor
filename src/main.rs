@@ -32,6 +32,8 @@ use vmm_sys_util::signal::block_signal;
 enum Error {
     #[error("Failed to create API EventFd: {0}")]
     CreateApiEventFd(#[source] std::io::Error),
+    #[error("Failed to create Debug EventFd: {0}")]
+    CreateDebugEventFd(#[source] std::io::Error),
     #[cfg_attr(
         feature = "kvm",
         error("Failed to open hypervisor interface (is /dev/kvm available?): {0}")
@@ -513,6 +515,10 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
     event!("vmm", "starting");
 
     let hypervisor = hypervisor::new().map_err(Error::CreateHypervisor)?;
+
+    let (gdb_request_sender, gdb_request_receiver) = channel();
+    let debug_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateDebugEventFd)?;
+
     let vmm_thread = vmm::start_vmm_thread(
         env!("CARGO_PKG_VERSION").to_string(),
         &api_socket_path,
@@ -520,6 +526,9 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
         api_evt.try_clone().unwrap(),
         http_sender,
         api_request_receiver,
+        debug_evt.try_clone().unwrap(),
+        gdb_request_sender,
+        gdb_request_receiver,
         &seccomp_action,
         hypervisor,
     )

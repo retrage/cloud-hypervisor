@@ -1030,6 +1030,7 @@ impl cpu::Vcpu for KvmVcpu {
                     Ok(cpu::VmExit::MmioWrite(addr, data))
                 }
                 VcpuExit::Hyperv => Ok(cpu::VmExit::Hyperv),
+                VcpuExit::Debug(_) => Ok(cpu::VmExit::Debug),
 
                 r => Err(cpu::HypervisorCpuError::RunVcpu(anyhow!(
                     "Unexpected exit reason on vcpu run: {:?}",
@@ -1082,6 +1083,43 @@ impl cpu::Vcpu for KvmVcpu {
         }
 
         Ok(())
+    }
+    #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
+    ///
+    /// Sets guest debug.
+    ///
+    fn set_guest_debug(
+        &self,
+        addrs: &[vm_memory::GuestAddress],
+        enable_singlestep: bool,
+    ) -> cpu::Result<()> {
+        if addrs.len() > 4 {
+            return Err(cpu::HypervisorCpuError::SetDebugRegs(anyhow!(
+                "Support 4 breakpoints at most but {} addresses are passed",
+                addrs.len()
+            )));
+        }
+
+        let mut dbg: kvm_bindings::kvm_guest_debug = Default::default();
+        dbg.control = kvm_bindings::KVM_GUESTDBG_ENABLE | kvm_bindings::KVM_GUESTDBG_USE_HW_BP;
+        if enable_singlestep {
+            dbg.control |= kvm_bindings::KVM_GUESTDBG_SINGLESTEP;
+        }
+
+        // Set bits 9 and 10.
+        // bit 9: GE (global exact breakpoint enable) flag.
+        // biit 10: always 1.
+        dbg.arch.debugreg[7] = 0x0600;
+
+        for (i, addr) in addrs.iter().enumerate() {
+            dbg.arch.debugreg[i] = addr.0;
+            // Set global breakpoint enable flag
+            dbg.arch.debugreg[7] |= 2 << (i * 2);
+        }
+
+        self.fd
+            .set_guest_debug(&dbg)
+            .map_err(|e| cpu::HypervisorCpuError::SetDebugRegs(e.into()))
     }
     #[cfg(any(target_arch = "arm", target_arch = "aarch64"))]
     fn vcpu_init(&self, kvi: &VcpuInit) -> cpu::Result<()> {
