@@ -378,6 +378,15 @@ fn create_app<'a>(
             .group("vm-config"),
     );
 
+    #[cfg(all(target_arch = "x86_64", feature = "kvm"))]
+    {
+        app = app.arg(
+            Arg::with_name("gdb")
+                .long("gdb")
+                .help("Enable GDB debugging"),
+        );
+    }
+
     #[cfg(feature = "tdx")]
     let app = app.arg(
         Arg::new("tdx")

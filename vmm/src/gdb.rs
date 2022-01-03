@@ -67,6 +67,19 @@ pub enum GdbRequestPayload {
     SetHwBreakPoint(Vec<vm_memory::GuestAddress>),
 }
 
+#[repr(u64)]
+#[derive(Debug)]
+pub enum GdbResponseEventKind {
+    ReadRegs = 1,
+    WriteRegs,
+    ReadMem,
+    WriteMem,
+    Pause,
+    Resume,
+    EnableSingleStep,
+    SetHwBreakPoint,
+}
+
 pub fn gdb_thread(mut gdbstub: GdbStub, port: u32) {
     let addr = format!("0.0.0.0:{}", port);
     let listener = match TcpListener::bind(addr.clone()) {
@@ -87,13 +100,22 @@ pub fn gdb_thread(mut gdbstub: GdbStub, port: u32) {
     };
     info!("GDB connected from {}", addr);
 
+    /*
     if let Err(e) = gdbstub.vm_request(GdbRequestPayload::Pause) {
         error!("Failed to pause the VM after GDB connected: {:?}", e);
         return;
     }
+    */
 
     let connection: Box<dyn Connection<Error = std::io::Error>> = Box::new(stream);
     let mut gdb = gdbstub::GdbStub::new(connection);
+
+    /*
+    if let Err(e) = gdbstub.gdb_event.write(1) {
+        error!("Failed to notify event: {:?}", e);
+        return;
+    }
+    */
 
     match gdb.run(&mut gdbstub) {
         Ok(reason) => {
@@ -135,11 +157,22 @@ impl GdbStub {
             sender: response_sender,
             payload: payload,
         };
+        info!("vm_request request: {:?}", request);
+        let event_value = match request.payload  {
+            GdbRequestPayload::ReadRegs => GdbResponseEventKind::ReadRegs,
+            GdbRequestPayload::WriteRegs(_) => GdbResponseEventKind::WriteRegs,
+            GdbRequestPayload::ReadMem(_, _) => GdbResponseEventKind::ReadMem,
+            GdbRequestPayload::WriteMem(_, _) => GdbResponseEventKind::WriteMem,
+            GdbRequestPayload::Pause => GdbResponseEventKind::Pause,
+            GdbRequestPayload::Resume => GdbResponseEventKind::Resume,
+            GdbRequestPayload::EnableSingleStep => GdbResponseEventKind::EnableSingleStep,
+            GdbRequestPayload::SetHwBreakPoint(_) => GdbResponseEventKind::SetHwBreakPoint,
+        };
         self.gdb_sender
             .send(request)
             .map_err(Error::VmRequestError)?;
         self.gdb_event
-            .write(1)
+            .write(event_value as u64)
             .map_err(Error::VmResponseNotifyError)?;
         //let res = response_receiver.recv_timeout(std::time::Duration::from_secs(5)).map_err(Error::VmResponseTimeout)??;
         let res = response_receiver.recv().map_err(Error::VmResponseError)??;
@@ -187,9 +220,33 @@ impl SingleThreadOps for GdbStub {
             }
         }
 
-        //let mut check_gdb_interrupt = gdb_interrupt.no_async();
+        let mut check_gdb_interrupt = gdb_interrupt.no_async();
+        // Polling
+        loop {
+            match self.gdb_event.read() {
+                Ok(v) => {
+                    if v == 256 {
+                        if single_step {
+                            return Ok(StopReason::DoneStep);
+                        } else {
+                            return Ok(StopReason::HwBreak);
+                        }
+                    }
+                    continue;
+                },
+                Err(e) => {
+                    error!("Failed to read gdb_event: {:?}", e);
+                }
+            }
 
-        Err("unimplemented")
+            if check_gdb_interrupt.pending() {
+                self.vm_request(GdbRequestPayload::Pause).map_err(|e| {
+                    error!("Failed to pause the target: {:?}", e);
+                    "Failed to pause the target"
+                })?;
+                return Ok(StopReason::GdbInterrupt);
+            }
+        }
     }
 
     fn read_registers(

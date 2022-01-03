@@ -298,10 +298,10 @@ impl VmState {
     fn valid_transition(self, new_state: VmState) -> Result<()> {
         match self {
             VmState::Created => match new_state {
-                VmState::Created | VmState::Shutdown | VmState::BreakPoint => {
+                VmState::Created | VmState::Shutdown => {
                     Err(Error::InvalidStateTransition(self, new_state))
                 }
-                VmState::Running | VmState::Paused => Ok(()),
+                VmState::Running | VmState::Paused | VmState::BreakPoint => Ok(()),
             },
 
             VmState::Running => match new_state {
@@ -325,7 +325,7 @@ impl VmState {
                 VmState::Running | VmState::Shutdown => Ok(()),
             },
             VmState::BreakPoint => match new_state {
-                VmState::Running => Ok(()),
+                VmState::Created | VmState::Running => Ok(()),
                 _ => Err(Error::InvalidStateTransition(self, new_state)),
             },
         }
@@ -521,6 +521,7 @@ pub struct Vm {
     numa_nodes: NumaNodes,
     seccomp_action: SeccompAction,
     exit_evt: EventFd,
+    debug_evt: EventFd,
     #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
     hypervisor: Arc<dyn hypervisor::Hypervisor>,
 }
@@ -533,6 +534,7 @@ impl Vm {
         vm: Arc<dyn hypervisor::Vm>,
         exit_evt: EventFd,
         reset_evt: EventFd,
+        debug_evt: EventFd,
         seccomp_action: &SeccompAction,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         activate_evt: EventFd,
@@ -593,6 +595,7 @@ impl Vm {
         });
 
         let exit_evt_clone = exit_evt.try_clone().map_err(Error::EventFdClone)?;
+        let debug_evt_clone = debug_evt.try_clone().map_err(Error::EventFdClone)?;
         #[cfg(feature = "tdx")]
         let tdx_enabled = config.lock().unwrap().tdx.is_some();
         let cpus_config = { &config.lock().unwrap().cpus.clone() };
@@ -603,6 +606,7 @@ impl Vm {
             vm.clone(),
             exit_evt_clone,
             reset_evt,
+            debug_evt_clone,
             hypervisor.clone(),
             seccomp_action.clone(),
             vm_ops,
@@ -650,6 +654,7 @@ impl Vm {
             numa_nodes,
             seccomp_action: seccomp_action.clone(),
             exit_evt,
+            debug_evt,
             #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
             hypervisor,
         })
@@ -741,6 +746,7 @@ impl Vm {
         config: Arc<Mutex<VmConfig>>,
         exit_evt: EventFd,
         reset_evt: EventFd,
+        debug_evt: EventFd,
         seccomp_action: &SeccompAction,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         activate_evt: EventFd,
@@ -795,6 +801,7 @@ impl Vm {
             vm,
             exit_evt,
             reset_evt,
+            debug_evt,
             seccomp_action,
             hypervisor,
             activate_evt,
@@ -817,6 +824,7 @@ impl Vm {
         snapshot: &Snapshot,
         exit_evt: EventFd,
         reset_evt: EventFd,
+        debug_evt: EventFd,
         source_url: Option<&str>,
         prefault: bool,
         seccomp_action: &SeccompAction,
@@ -866,6 +874,7 @@ impl Vm {
             vm,
             exit_evt,
             reset_evt,
+            debug_evt,
             seccomp_action,
             hypervisor,
             activate_evt,
@@ -878,6 +887,7 @@ impl Vm {
         config: Arc<Mutex<VmConfig>>,
         exit_evt: EventFd,
         reset_evt: EventFd,
+        debug_evt: EventFd,
         seccomp_action: &SeccompAction,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         activate_evt: EventFd,
@@ -917,6 +927,7 @@ impl Vm {
             vm,
             exit_evt,
             reset_evt,
+            debug_evt,
             seccomp_action,
             hypervisor,
             activate_evt,
@@ -1978,7 +1989,7 @@ impl Vm {
             return self.resume().map_err(Error::Resume);
         }
 
-        let new_state = VmState::Running;
+        let new_state = VmState::BreakPoint;
         current_state.valid_transition(new_state)?;
 
         // Load kernel if configured
@@ -2050,11 +2061,35 @@ impl Vm {
             self.vm.tdx_finalize().map_err(Error::FinalizeTdx)?;
         }
 
-        self.cpu_manager
-            .lock()
-            .unwrap()
-            .start_boot_vcpus()
-            .map_err(Error::CpuManager)?;
+        /*
+        if new_state == VmState::BreakPoint {
+            loop {
+                match self.debug_evt.read() {
+                    Ok(v) => {
+                        if v == crate::gdb::GdbResponseEventKind::Resume as u64 {
+                            // GDB connection created.
+                            info!("v: {} GDB Connected. Continue running...", v);
+                            new_state = VmState::Running;
+                            break;
+                        }
+                        continue;
+                    },
+                    Err(_) => {
+                        // TODO: Check if error is EAGAIN
+                        continue;
+                    }
+                }
+            }
+        }
+        */
+
+        if new_state == VmState::Running {
+            self.cpu_manager
+                .lock()
+                .unwrap()
+                .start_boot_vcpus()
+                .map_err(Error::CpuManager)?;
+        }
 
         self.setup_signal_handler()?;
         self.setup_tty()?;
@@ -2399,11 +2434,19 @@ impl Vm {
                 return Ok(crate::gdb::GdbResponsePayload::Empty);
             }
             crate::gdb::GdbRequestPayload::Pause => {
-                self.pause().map_err(Error::Pause)?;
+                self.cpu_manager
+                    .lock()
+                    .unwrap()
+                    .pause()
+                    .map_err(Error::Pause)?;
                 return Ok(crate::gdb::GdbResponsePayload::Empty);
             }
             crate::gdb::GdbRequestPayload::Resume => {
-                self.resume().map_err(Error::Resume)?;
+                self.cpu_manager
+                    .lock()
+                    .unwrap()
+                    .resume()
+                    .map_err(Error::Resume)?;
                 return Ok(crate::gdb::GdbResponsePayload::Empty);
             }
             crate::gdb::GdbRequestPayload::ReadRegs => {
@@ -2765,7 +2808,7 @@ mod tests {
                 assert!(state.valid_transition(VmState::Running).is_ok());
                 assert!(state.valid_transition(VmState::Shutdown).is_err());
                 assert!(state.valid_transition(VmState::Paused).is_ok());
-                assert!(state.valid_transition(VmState::BreakPoint).is_err());
+                assert!(state.valid_transition(VmState::BreakPoint).is_ok());
             }
             VmState::Running => {
                 // Check the transitions from Running
@@ -2793,7 +2836,7 @@ mod tests {
             }
             VmState::BreakPoint => {
                 // Check the transitions from Breakpoint
-                assert!(state.valid_transition(VmState::Created).is_err());
+                assert!(state.valid_transition(VmState::Created).is_ok());
                 assert!(state.valid_transition(VmState::Running).is_ok());
                 assert!(state.valid_transition(VmState::Shutdown).is_err());
                 assert!(state.valid_transition(VmState::Paused).is_err());

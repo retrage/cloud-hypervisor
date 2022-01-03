@@ -495,6 +495,7 @@ pub struct CpuManager {
     exit_evt: EventFd,
     #[cfg_attr(target_arch = "aarch64", allow(dead_code))]
     reset_evt: EventFd,
+    debug_evt: EventFd,
     vcpu_states: Vec<VcpuState>,
     selected_cpu: u8,
     vcpus: Vec<Arc<Mutex<Vcpu>>>,
@@ -647,6 +648,7 @@ impl CpuManager {
         vm: Arc<dyn hypervisor::Vm>,
         exit_evt: EventFd,
         reset_evt: EventFd,
+        debug_evt: EventFd,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         seccomp_action: SeccompAction,
         vmmops: Arc<dyn VmmOps>,
@@ -725,6 +727,7 @@ impl CpuManager {
             vcpu_states,
             exit_evt,
             reset_evt,
+            debug_evt,
             selected_cpu: 0,
             vcpus: Vec::with_capacity(usize::from(config.max_vcpus)),
             seccomp_action,
@@ -863,6 +866,7 @@ impl CpuManager {
     ) -> Result<()> {
         let reset_evt = self.reset_evt.try_clone().unwrap();
         let exit_evt = self.exit_evt.try_clone().unwrap();
+        let debug_evt = self.debug_evt.try_clone().unwrap();
         let panic_exit_evt = self.exit_evt.try_clone().unwrap();
         let vcpu_kill_signalled = self.vcpus_kill_signalled.clone();
         let vcpu_pause_signalled = self.vcpus_pause_signalled.clone();
@@ -969,7 +973,7 @@ impl CpuManager {
                                     VmExit::Debug => {
                                         info!("VmExit::Debug");
                                         vcpu_pause_signalled.store(true, Ordering::SeqCst);
-                                        // TODO: Notify hit break point to gdb
+                                        debug_evt.write(256).unwrap(); // TODO: Fix event number
                                     }
                                     #[cfg(target_arch = "x86_64")]
                                     VmExit::IoapicEoi(vector) => {
