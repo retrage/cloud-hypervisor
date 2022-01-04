@@ -521,7 +521,6 @@ pub struct Vm {
     numa_nodes: NumaNodes,
     seccomp_action: SeccompAction,
     exit_evt: EventFd,
-    debug_evt: EventFd,
     #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
     hypervisor: Arc<dyn hypervisor::Hypervisor>,
 }
@@ -595,7 +594,6 @@ impl Vm {
         });
 
         let exit_evt_clone = exit_evt.try_clone().map_err(Error::EventFdClone)?;
-        let debug_evt_clone = debug_evt.try_clone().map_err(Error::EventFdClone)?;
         #[cfg(feature = "tdx")]
         let tdx_enabled = config.lock().unwrap().tdx.is_some();
         let cpus_config = { &config.lock().unwrap().cpus.clone() };
@@ -606,7 +604,7 @@ impl Vm {
             vm.clone(),
             exit_evt_clone,
             reset_evt,
-            debug_evt_clone,
+            debug_evt,
             hypervisor.clone(),
             seccomp_action.clone(),
             vm_ops,
@@ -654,7 +652,6 @@ impl Vm {
             numa_nodes,
             seccomp_action: seccomp_action.clone(),
             exit_evt,
-            debug_evt,
             #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
             hypervisor,
         })
@@ -1989,8 +1986,8 @@ impl Vm {
             return self.resume().map_err(Error::Resume);
         }
 
-        let new_state = VmState::BreakPoint;
-        current_state.valid_transition(new_state)?;
+        let new_state = VmState::Created;
+        // current_state.valid_transition(new_state)?;
 
         // Load kernel if configured
         let entry_point = if self.kernel.as_ref().is_some() {
@@ -2434,19 +2431,34 @@ impl Vm {
                 return Ok(crate::gdb::GdbResponsePayload::Empty);
             }
             crate::gdb::GdbRequestPayload::Pause => {
-                self.cpu_manager
-                    .lock()
-                    .unwrap()
-                    .pause()
-                    .map_err(Error::Pause)?;
+                if !self.cpu_manager.lock().unwrap().vcpus_pause_signalled() {
+                    self.cpu_manager
+                        .lock()
+                        .unwrap()
+                        .pause()
+                        .map_err(Error::PauseCpus)?;
+                }
+                let mut state = self.state.try_write().map_err(|_| Error::PoisonedState)?;
+                *state = VmState::BreakPoint;
                 return Ok(crate::gdb::GdbResponsePayload::Empty);
             }
             crate::gdb::GdbRequestPayload::Resume => {
-                self.cpu_manager
-                    .lock()
-                    .unwrap()
-                    .resume()
-                    .map_err(Error::Resume)?;
+                let vm_state = self.get_state().unwrap();
+                if vm_state == VmState::Created {
+                    self.cpu_manager
+                        .lock()
+                        .unwrap()
+                        .start_boot_vcpus()
+                        .map_err(Error::CpuManager)?;
+                } else if vm_state == VmState::BreakPoint {
+                    self.cpu_manager
+                        .lock()
+                        .unwrap()
+                        .resume()
+                        .map_err(Error::ResumeCpus)?;
+                }
+                let mut state = self.state.try_write().map_err(|_| Error::PoisonedState)?;
+                *state = VmState::Running;
                 return Ok(crate::gdb::GdbResponsePayload::Empty);
             }
             crate::gdb::GdbRequestPayload::ReadRegs => {

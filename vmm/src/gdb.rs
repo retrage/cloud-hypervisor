@@ -100,22 +100,8 @@ pub fn gdb_thread(mut gdbstub: GdbStub, port: u32) {
     };
     info!("GDB connected from {}", addr);
 
-    /*
-    if let Err(e) = gdbstub.vm_request(GdbRequestPayload::Pause) {
-        error!("Failed to pause the VM after GDB connected: {:?}", e);
-        return;
-    }
-    */
-
     let connection: Box<dyn Connection<Error = std::io::Error>> = Box::new(stream);
     let mut gdb = gdbstub::GdbStub::new(connection);
-
-    /*
-    if let Err(e) = gdbstub.gdb_event.write(1) {
-        error!("Failed to notify event: {:?}", e);
-        return;
-    }
-    */
 
     match gdb.run(&mut gdbstub) {
         Ok(reason) => {
@@ -126,6 +112,7 @@ pub fn gdb_thread(mut gdbstub: GdbStub, port: u32) {
         }
     }
 
+    // Resume the VM when GDB session is disconnected.
     if let Err(e) = gdbstub.vm_request(GdbRequestPayload::Resume) {
         error!("Failed to resume the VM after GDB disconnected: {:?}", e);
     }
@@ -226,16 +213,21 @@ impl SingleThreadOps for GdbStub {
             match self.gdb_event.read() {
                 Ok(v) => {
                     if v == 256 {
+                        info!("Received VmExit::Debug");
+                        self.vm_request(GdbRequestPayload::Pause).map_err(|e| {
+                            error!("Failed to pause the target: {:?}", e);
+                            "Failed to pause the target"
+                        })?;
                         if single_step {
                             return Ok(StopReason::DoneStep);
                         } else {
                             return Ok(StopReason::HwBreak);
                         }
                     }
-                    continue;
                 },
-                Err(e) => {
-                    error!("Failed to read gdb_event: {:?}", e);
+                Err(_e) => {
+                    //error!("Failed to read gdb_event: {:?}", e);
+                    continue;
                 }
             }
 

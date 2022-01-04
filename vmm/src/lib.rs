@@ -248,11 +248,11 @@ pub fn start_vmm_thread(
     api_sender: Sender<ApiRequest>,
     api_receiver: Receiver<ApiRequest>,
     debug_event: EventFd,
-    gdb_sender: Sender<gdb::GdbRequest>,
-    gdb_receiver: Receiver<gdb::GdbRequest>,
     seccomp_action: &SeccompAction,
     hypervisor: Arc<dyn hypervisor::Hypervisor>,
 ) -> Result<thread::JoinHandle<Result<()>>> {
+    let (gdb_sender, gdb_receiver) = std::sync::mpsc::channel();
+
     let http_api_event = api_event.try_clone().map_err(Error::EventFdClone)?;
     let gdb_debug_event = debug_event.try_clone().map_err(Error::EventFdClone)?;
 

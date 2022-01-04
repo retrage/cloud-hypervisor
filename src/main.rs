@@ -525,7 +525,6 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
 
     let hypervisor = hypervisor::new().map_err(Error::CreateHypervisor)?;
 
-    let (gdb_request_sender, gdb_request_receiver) = channel();
     let debug_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateDebugEventFd)?;
 
     let vmm_thread = vmm::start_vmm_thread(
@@ -536,8 +535,6 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
         http_sender,
         api_request_receiver,
         debug_evt.try_clone().unwrap(),
-        gdb_request_sender,
-        gdb_request_receiver,
         &seccomp_action,
         hypervisor,
     )

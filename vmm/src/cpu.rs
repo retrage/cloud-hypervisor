@@ -1478,6 +1478,10 @@ impl CpuManager {
         }
     }
     */
+
+    pub fn vcpus_pause_signalled(&self) -> bool {
+        self.vcpus_pause_signalled.load(Ordering::SeqCst)
+    }
 }
 
 #[cfg(feature = "acpi")]
