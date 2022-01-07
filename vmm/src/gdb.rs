@@ -224,10 +224,11 @@ impl SingleThreadOps for GdbStub {
                             return Ok(StopReason::HwBreak);
                         }
                     }
-                },
-                Err(_e) => {
-                    //error!("Failed to read gdb_event: {:?}", e);
-                    continue;
+                }
+                Err(e) => {
+                    if e.kind() != std::io::ErrorKind::WouldBlock {
+                        error!("Failed to read gdb_event: {:?}", e);
+                    }
                 }
             }
 
