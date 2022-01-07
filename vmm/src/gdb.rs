@@ -145,7 +145,7 @@ impl GdbStub {
             payload: payload,
         };
         info!("vm_request request: {:?}", request);
-        let event_value = match request.payload  {
+        let event_value = match request.payload {
             GdbRequestPayload::ReadRegs => GdbResponseEventKind::ReadRegs,
             GdbRequestPayload::WriteRegs(_) => GdbResponseEventKind::WriteRegs,
             GdbRequestPayload::ReadMem(_, _) => GdbResponseEventKind::ReadMem,

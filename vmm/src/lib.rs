@@ -493,7 +493,7 @@ impl Vmm {
 
         let exit_evt = self.exit_evt.try_clone().map_err(VmError::EventFdClone)?;
         let reset_evt = self.reset_evt.try_clone().map_err(VmError::EventFdClone)?;
-        let debug_evt= self.debug_evt.try_clone().map_err(VmError::EventFdClone)?;
+        let debug_evt = self.debug_evt.try_clone().map_err(VmError::EventFdClone)?;
         let activate_evt = self
             .activate_evt
             .try_clone()
