@@ -128,6 +128,10 @@ pub enum Error {
 
     #[cfg(target_arch = "x86_64")]
     WriteMemory(hypervisor::HypervisorVmError),
+
+    TranslatingVirtAddr,
+
+    PageNotPresent,
 }
 pub type Result<T> = result::Result<T, Error>;
 
@@ -310,6 +314,11 @@ impl Vcpu {
         .map_err(Error::VcpuConfiguration)?;
 
         Ok(())
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    pub fn read_special_registers(&self) -> Result<hypervisor::x86_64::SpecialRegisters> {
+        self.vcpu.get_sregs().map_err(Error::ReadRegs)
     }
 
     /// Sets the guest debug registers.
@@ -1441,26 +1450,52 @@ impl CpuManager {
 
     #[cfg(target_arch = "x86_64")]
     pub fn read_memory(&self, vaddr: &GuestAddress, len: &usize) -> Result<Vec<u8>> {
-        // TODO: Convert guest virtual address to guest physical address
+        let sregs = self.vcpus[0].lock().unwrap().read_special_registers()?;
         let mut buf = vec![0; *len];
-        self.vmmops
-            .guest_mem_read(vaddr.0, &mut buf)
-            .map_err(Error::ReadMemory)?;
+        let mut total_read = 0_u64;
+
+        while total_read < *len as u64 {
+            let (paddr, psize) = self.guest_phys_addr(vaddr.0 + total_read, &sregs)?;
+            let read_len = std::cmp::min(*len as u64 - total_read, psize - (paddr & (psize - 1)));
+            self.vmmops
+                .guest_mem_read(
+                    paddr,
+                    &mut buf[total_read as usize..total_read as usize + read_len as usize],
+                )
+                .map_err(Error::ReadMemory)?;
+            total_read += read_len;
+        }
         Ok(buf)
     }
 
     #[cfg(target_arch = "x86_64")]
     pub fn write_memory(&self, vaddr: &GuestAddress, data: &Vec<u8>) -> Result<()> {
-        // TODO: Check return value written size
-        self.vmmops
-            .guest_mem_write(vaddr.0, data)
-            .map_err(Error::WriteMemory)?;
+        let sregs = self.vcpus[0].lock().unwrap().read_special_registers()?;
+        let mut total_written = 0_u64;
+
+        while total_written < data.len() as u64 {
+            let (paddr, psize) = self.guest_phys_addr(vaddr.0 + total_written, &sregs)?;
+            let write_len = std::cmp::min(
+                data.len() as u64 - total_written,
+                psize - (paddr & (psize - 1)),
+            );
+            self.vmmops
+                .guest_mem_write(
+                    paddr,
+                    &data[total_written as usize..total_written as usize + write_len as usize],
+                )
+                .map_err(Error::ReadMemory)?;
+            total_written += write_len;
+        }
         Ok(())
     }
 
-    /*
     // return the translated address and the size of the page it resides in.
-    fn guest_phys_addr(&self, vaddr: u64) -> Result<(u64, u64)> {
+    fn guest_phys_addr(
+        &self,
+        vaddr: u64,
+        sregs: &hypervisor::x86_64::SpecialRegisters,
+    ) -> Result<(u64, u64)> {
         const CR0_PG_MASK: u64 = 1 << 31;
         const CR4_PAE_MASK: u64 = 1 << 5;
         const CR4_LA57_MASK: u64 = 1 << 12;
@@ -1474,10 +1509,71 @@ impl CpuManager {
         const PAGE_SIZE_2M: u64 = 2 * 1024 * 1024;
         const PAGE_SIZE_1G: u64 = 1024 * 1024 * 1024;
 
-        fn next_pte(&self, curr_table_addr: u64, vaddr: u64, level: usize) -> Result<u64> {
+        fn next_pte(
+            cpu_manager: &CpuManager,
+            curr_table_addr: u64,
+            vaddr: u64,
+            level: usize,
+        ) -> Result<u64> {
+            let mut ent_bytes = [0_u8; 8];
+            cpu_manager
+                .vmmops
+                .guest_mem_read(
+                    (curr_table_addr & PTE_ADDR_MASK) + page_table_offset(vaddr, level),
+                    &mut ent_bytes,
+                )
+                .map_err(|_| Error::TranslatingVirtAddr)?;
+            let ent = u64::from_ne_bytes(ent_bytes);
+
+            if ent & PAGE_PRESENT == 0 {
+                return Err(Error::PageNotPresent);
+            }
+            Ok(ent)
         }
+
+        // Get the offset in to the page of `vaddr`.
+        fn page_offset(vaddr: u64, page_size: u64) -> u64 {
+            vaddr & (page_size - 1)
+        }
+
+        // Get the offset in to the page table of the given `level` specified by the virtual `address`.
+        // `level` is 1 through 5 in x86_64 to handle the five levels of paging.
+        fn page_table_offset(addr: u64, level: usize) -> u64 {
+            let offset = (level - 1) * 9 + 12;
+            ((addr >> offset) & 0x1ff) << 3
+        }
+
+        if sregs.cr0 & CR0_PG_MASK == 0 {
+            return Ok((vaddr, PAGE_SIZE_4K));
+        }
+
+        if sregs.cr4 & CR4_PAE_MASK == 0 {
+            return Err(Error::TranslatingVirtAddr);
+        }
+
+        if sregs.efer & MSR_EFER_LMA != 0 {
+            // TODO - check LA57
+            if sregs.cr4 & CR4_LA57_MASK != 0 {}
+            let p4_ent = next_pte(self, sregs.cr3, vaddr, 4)?;
+            let p3_ent = next_pte(self, p4_ent, vaddr, 3)?;
+            // TODO check if it's a 1G page with the PSE bit in p2_ent
+            if p3_ent & PAGE_PSE_MASK != 0 {
+                // It's a 1G page with the PSE bit in p3_ent
+                let paddr = p3_ent & PTE_ADDR_MASK | page_offset(vaddr, PAGE_SIZE_1G);
+                return Ok((paddr, PAGE_SIZE_1G));
+            }
+            let p2_ent = next_pte(self, p3_ent, vaddr, 2)?;
+            if p2_ent & PAGE_PSE_MASK != 0 {
+                // It's a 2M page with the PSE bit in p2_ent
+                let paddr = p2_ent & PTE_ADDR_MASK | page_offset(vaddr, PAGE_SIZE_2M);
+                return Ok((paddr, PAGE_SIZE_2M));
+            }
+            let p1_ent = next_pte(self, p2_ent, vaddr, 1)?;
+            let paddr = p1_ent & PTE_ADDR_MASK | page_offset(vaddr, PAGE_SIZE_4K);
+            return Ok((paddr, PAGE_SIZE_4K));
+        }
+        Err(Error::TranslatingVirtAddr)
     }
-    */
 
     pub fn vcpus_pause_signalled(&self) -> bool {
         self.vcpus_pause_signalled.load(Ordering::SeqCst)
