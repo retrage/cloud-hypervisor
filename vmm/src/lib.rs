@@ -1616,7 +1616,7 @@ impl Vmm {
                         info!("GDB request event: {:?}", gdb_request);
                         let response = self
                             .vm_debug_request(&gdb_request.payload)
-                            .map_err(gdb::Error::GdbRequest);
+                            .map_err(gdb::Error::Vm);
 
                         gdb_request
                             .sender
