@@ -381,7 +381,7 @@ fn create_app<'a>(
     #[cfg(all(target_arch = "x86_64", feature = "kvm"))]
     {
         app = app.arg(
-            Arg::with_name("gdb")
+            Arg::new("gdb")
                 .long("gdb")
                 .help("Enable GDB debugging"),
         );

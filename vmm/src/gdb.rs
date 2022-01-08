@@ -142,7 +142,7 @@ impl GdbStub {
         let (response_sender, response_receiver) = std::sync::mpsc::channel();
         let request = GdbRequest {
             sender: response_sender,
-            payload: payload,
+            payload,
         };
         info!("vm_request request: {:?}", request);
         let event_value = match request.payload {

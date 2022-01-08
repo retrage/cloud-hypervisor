@@ -1100,8 +1100,7 @@ impl cpu::Vcpu for KvmVcpu {
             )));
         }
 
-        let mut dbg: kvm_bindings::kvm_guest_debug = Default::default();
-        dbg.control = kvm_bindings::KVM_GUESTDBG_ENABLE | kvm_bindings::KVM_GUESTDBG_USE_HW_BP;
+        let mut dbg = kvm_bindings::kvm_guest_debug { control: kvm_bindings::KVM_GUESTDBG_ENABLE | kvm_bindings::KVM_GUESTDBG_USE_HW_BP, ..Default::default() };
         if enable_singlestep {
             dbg.control |= kvm_bindings::KVM_GUESTDBG_SINGLESTEP;
         }

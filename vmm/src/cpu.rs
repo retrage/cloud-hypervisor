@@ -1469,7 +1469,7 @@ impl CpuManager {
     }
 
     #[cfg(target_arch = "x86_64")]
-    pub fn write_memory(&self, vaddr: &GuestAddress, data: &Vec<u8>) -> Result<()> {
+    pub fn write_memory(&self, vaddr: &GuestAddress, data: &[u8]) -> Result<()> {
         let sregs = self.vcpus[0].lock().unwrap().read_special_registers()?;
         let mut total_written = 0_u64;
 
