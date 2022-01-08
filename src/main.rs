@@ -379,11 +379,7 @@ fn create_app<'a>(
     );
 
     #[cfg(all(target_arch = "x86_64", feature = "kvm"))]
-    let app = app.arg(
-        Arg::new("gdb")
-            .long("gdb")
-            .help("Enable GDB debugging"),
-    );
+    let app = app.arg(Arg::new("gdb").long("gdb").help("Enable GDB debugging"));
 
     #[cfg(feature = "tdx")]
     let app = app.arg(
