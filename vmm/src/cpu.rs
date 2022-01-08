@@ -43,7 +43,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::{cmp, io, result, thread};
 use vm_device::BusDevice;
-#[cfg(feature = "acpi")]
+#[cfg(any(target_arch = "x86_64", feature = "acpi"))]
 use vm_memory::GuestAddress;
 use vm_memory::GuestMemoryAtomic;
 use vm_migration::{
