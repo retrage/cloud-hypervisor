@@ -25,10 +25,10 @@ type ArchUsize = u64;
 
 #[derive(Debug)]
 pub enum Error {
-    GdbRequestError(crate::vm::Error),
-    VmRequestError(mpsc::SendError<GdbRequest>),
-    VmResponseNotifyError(std::io::Error),
-    VmResponseError(mpsc::RecvError),
+    GdbRequest(crate::vm::Error),
+    VmRequest(mpsc::SendError<GdbRequest>),
+    VmResponseNotify(std::io::Error),
+    VmResponse(mpsc::RecvError),
     VmResponseTimeout(mpsc::RecvTimeoutError),
 }
 type GdbResult<T> = std::result::Result<T, Error>;
@@ -155,14 +155,12 @@ impl GdbStub {
             GdbRequestPayload::EnableSingleStep => GdbResponseEventKind::EnableSingleStep,
             GdbRequestPayload::SetHwBreakPoint(_) => GdbResponseEventKind::SetHwBreakPoint,
         };
-        self.gdb_sender
-            .send(request)
-            .map_err(Error::VmRequestError)?;
+        self.gdb_sender.send(request).map_err(Error::VmRequest)?;
         self.gdb_event
             .write(event_value as u64)
-            .map_err(Error::VmResponseNotifyError)?;
+            .map_err(Error::VmResponseNotify)?;
         //let res = response_receiver.recv_timeout(std::time::Duration::from_secs(5)).map_err(Error::VmResponseTimeout)??;
-        let res = response_receiver.recv().map_err(Error::VmResponseError)??;
+        let res = response_receiver.recv().map_err(Error::VmResponse)??;
         info!("vm_request res: {:?}", res);
         Ok(res)
     }
