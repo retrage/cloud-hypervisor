@@ -155,7 +155,9 @@ impl GdbStub {
             GdbRequestPayload::EnableSingleStep => GdbResponseEventKind::EnableSingleStep,
             GdbRequestPayload::SetHwBreakPoint(_) => GdbResponseEventKind::SetHwBreakPoint,
         };
-        self.gdb_sender.send(request).map_err(|_| Error::GdbRequest)?;
+        self.gdb_sender
+            .send(request)
+            .map_err(|_| Error::GdbRequest)?;
         self.gdb_event
             .write(event_value as u64)
             .map_err(Error::GdbResponseNotify)?;
