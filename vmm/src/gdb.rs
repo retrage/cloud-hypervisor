@@ -42,7 +42,7 @@ pub enum VmDebugStatus {
 #[derive(Debug)]
 pub enum GdbResponsePayload {
     Empty,
-    RegValues(CoreRegs),
+    RegValues(Box<CoreRegs>),
     MemoryRegion(Vec<u8>),
     VmDebugStatus(VmDebugStatus),
 }
@@ -58,7 +58,7 @@ pub struct GdbRequest {
 #[derive(Debug)]
 pub enum GdbRequestPayload {
     ReadRegs,
-    WriteRegs(CoreRegs),
+    WriteRegs(Box<CoreRegs>),
     ReadMem(vm_memory::GuestAddress, usize),
     WriteMem(vm_memory::GuestAddress, Vec<u8>),
     Pause,
@@ -246,7 +246,7 @@ impl SingleThreadOps for GdbStub {
     ) -> TargetResult<(), Self> {
         match self.vm_request(GdbRequestPayload::ReadRegs) {
             Ok(GdbResponsePayload::RegValues(r)) => {
-                *regs = r;
+                *regs = *r;
                 Ok(())
             }
             Ok(s) => {
@@ -264,7 +264,7 @@ impl SingleThreadOps for GdbStub {
         &mut self,
         regs: &<Self::Arch as Arch>::Registers,
     ) -> TargetResult<(), Self> {
-        match self.vm_request(GdbRequestPayload::WriteRegs(regs.clone())) {
+        match self.vm_request(GdbRequestPayload::WriteRegs(Box::new(regs.clone()))) {
             Ok(_) => Ok(()),
             Err(e) => {
                 error!("Failed to request WriteRegs: {:?}", e);

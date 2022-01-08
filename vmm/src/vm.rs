@@ -2468,7 +2468,7 @@ impl Vm {
                     .unwrap()
                     .read_registers()
                     .map_err(Error::CpuManager)?;
-                Ok(crate::gdb::GdbResponsePayload::RegValues(regs))
+                Ok(crate::gdb::GdbResponsePayload::RegValues(Box::new(regs)))
             }
             crate::gdb::GdbRequestPayload::WriteRegs(regs) => {
                 self.cpu_manager
