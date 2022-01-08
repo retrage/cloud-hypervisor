@@ -1130,6 +1130,7 @@ pub fn debug_enable_singlestep(vcpu: &dyn hypervisor::Vcpu) -> super::Result<()>
     Ok(())
 }
 
+#[cfg(all(feature = "kvm", target_arch = "x86_64"))]
 pub fn debug_set_hw_breakpoints(
     vcpu: &dyn hypervisor::Vcpu,
     breakpoints: &[GuestAddress],
