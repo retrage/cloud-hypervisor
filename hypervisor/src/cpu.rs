@@ -27,7 +27,6 @@ use crate::MpState;
 use crate::SuspendRegisters;
 #[cfg(target_arch = "x86_64")]
 use crate::Xsave;
-use kvm_bindings::kvm_debug_exit_arch;
 #[cfg(feature = "mshv")]
 use mshv_bindings::*;
 use thiserror::Error;
@@ -260,7 +259,7 @@ pub enum VmExit<'a> {
     Shutdown,
     Hyperv,
     #[cfg(feature = "kvm")]
-    Debug(kvm_debug_exit_arch),
+    Debug(kvm_bindings::kvm_debug_exit_arch),
 }
 
 ///
