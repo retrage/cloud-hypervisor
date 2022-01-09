@@ -42,7 +42,8 @@ use crate::arch::x86::NUM_IOAPIC_PINS;
 use aarch64::{RegList, Register, StandardRegisters};
 #[cfg(target_arch = "x86_64")]
 use kvm_bindings::{
-    kvm_enable_cap, kvm_msr_entry, MsrList, KVM_CAP_HYPERV_SYNIC, KVM_CAP_SPLIT_IRQCHIP,
+    kvm_enable_cap, kvm_guest_debug, kvm_msr_entry, MsrList, KVM_CAP_HYPERV_SYNIC,
+    KVM_CAP_SPLIT_IRQCHIP, KVM_GUESTDBG_ENABLE, KVM_GUESTDBG_SINGLESTEP, KVM_GUESTDBG_USE_HW_BP,
 };
 #[cfg(target_arch = "x86_64")]
 use x86_64::{check_required_kvm_extensions, FpuState, SpecialRegisters, StandardRegisters};
@@ -1100,12 +1101,12 @@ impl cpu::Vcpu for KvmVcpu {
             )));
         }
 
-        let mut dbg = kvm_bindings::kvm_guest_debug {
-            control: kvm_bindings::KVM_GUESTDBG_ENABLE | kvm_bindings::KVM_GUESTDBG_USE_HW_BP,
+        let mut dbg = kvm_guest_debug {
+            control: KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_USE_HW_BP,
             ..Default::default()
         };
         if enable_singlestep {
-            dbg.control |= kvm_bindings::KVM_GUESTDBG_SINGLESTEP;
+            dbg.control |= KVM_GUESTDBG_SINGLESTEP;
         }
 
         // Set bits 9 and 10.
