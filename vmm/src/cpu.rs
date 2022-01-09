@@ -1449,14 +1449,14 @@ impl CpuManager {
     }
 
     #[cfg(target_arch = "x86_64")]
-    pub fn read_memory(&self, vaddr: &GuestAddress, len: &usize) -> Result<Vec<u8>> {
+    pub fn read_memory(&self, vaddr: GuestAddress, len: usize) -> Result<Vec<u8>> {
         let sregs = self.vcpus[0].lock().unwrap().read_special_registers()?;
-        let mut buf = vec![0; *len];
+        let mut buf = vec![0; len];
         let mut total_read = 0_u64;
 
-        while total_read < *len as u64 {
+        while total_read < len as u64 {
             let (paddr, psize) = self.guest_phys_addr(vaddr.0 + total_read, &sregs)?;
-            let read_len = std::cmp::min(*len as u64 - total_read, psize - (paddr & (psize - 1)));
+            let read_len = std::cmp::min(len as u64 - total_read, psize - (paddr & (psize - 1)));
             self.vmmops
                 .guest_mem_read(
                     paddr,

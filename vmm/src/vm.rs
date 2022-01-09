@@ -2483,7 +2483,7 @@ impl Vm {
                     .cpu_manager
                     .lock()
                     .unwrap()
-                    .read_memory(vaddr, len)
+                    .read_memory(*vaddr, *len)
                     .map_err(Error::CpuManager)?;
                 Ok(crate::gdb::GdbResponsePayload::MemoryRegion(mem))
             }
