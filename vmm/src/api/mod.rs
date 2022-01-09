@@ -145,9 +145,6 @@ pub enum ApiError {
 
     /// Error triggering power button
     VmPowerButton(VmError),
-
-    /// Error related to GDB
-    VmGdb(VmError),
 }
 pub type ApiResult<T> = std::result::Result<T, ApiError>;
 
