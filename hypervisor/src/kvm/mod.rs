@@ -1086,7 +1086,7 @@ impl cpu::Vcpu for KvmVcpu {
     }
     #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
     ///
-    /// Sets guest debug.
+    /// Sets debug registers to set hardware breapoints or enable single step.
     ///
     fn set_guest_debug(
         &self,
