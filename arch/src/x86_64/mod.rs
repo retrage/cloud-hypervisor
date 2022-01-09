@@ -186,9 +186,6 @@ pub enum Error {
 
     /// Error checking CPUID compatibility
     CpuidCheckCompatibility,
-
-    /// Error debug feature
-    SetDebug(anyhow::Error),
 }
 
 impl From<Error> for super::Error {
@@ -1120,23 +1117,6 @@ fn update_cpuid_sgx(cpuid: &mut CpuId, epc_sections: Vec<SgxEpcSection>) -> Resu
     CpuidPatch::set_cpuid_reg(cpuid, 0x12, Some(subleaf_idx as u32), CpuidReg::ECX, 0);
     CpuidPatch::set_cpuid_reg(cpuid, 0x12, Some(subleaf_idx as u32), CpuidReg::EDX, 0);
 
-    Ok(())
-}
-
-#[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-pub fn debug_enable_singlestep(vcpu: &dyn hypervisor::Vcpu) -> super::Result<()> {
-    vcpu.set_guest_debug(&[], true /* enable_singlestep */)
-        .map_err(|e| Error::SetDebug(e.into()))?;
-    Ok(())
-}
-
-#[cfg(all(feature = "kvm", target_arch = "x86_64"))]
-pub fn debug_set_hw_breakpoints(
-    vcpu: &dyn hypervisor::Vcpu,
-    breakpoints: &[GuestAddress],
-) -> super::Result<()> {
-    vcpu.set_guest_debug(breakpoints, false /* enable_singlestep */)
-        .map_err(|e| Error::SetDebug(e.into()))?;
     Ok(())
 }
 
