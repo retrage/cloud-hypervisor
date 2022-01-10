@@ -26,12 +26,12 @@ use arch::EntryPoint;
 #[cfg(any(target_arch = "aarch64", feature = "acpi"))]
 use arch::NumaNodes;
 use devices::interrupt_controller::InterruptController;
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", feature = "kvm"))]
 use gdbstub_arch::x86::reg::{X86SegmentRegs, X86_64CoreRegs};
 #[cfg(target_arch = "aarch64")]
 use hypervisor::kvm::kvm_bindings;
-#[cfg(target_arch = "x86_64")]
-use hypervisor::x86_64::StandardRegisters;
+#[cfg(all(target_arch = "x86_64", feature = "kvm"))]
+use hypervisor::x86_64::{SpecialRegisters, StandardRegisters};
 #[cfg(target_arch = "x86_64")]
 use hypervisor::CpuId;
 use hypervisor::{vm::VmmOps, CpuState, HypervisorCpuError, VmExit};
@@ -312,98 +312,6 @@ impl Vcpu {
             kvm_hyperv,
         )
         .map_err(Error::VcpuConfiguration)?;
-
-        Ok(())
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    pub fn read_special_registers(&self) -> Result<hypervisor::x86_64::SpecialRegisters> {
-        self.vcpu.get_sregs().map_err(Error::ReadRegs)
-    }
-
-    /// Sets the guest debug registers.
-    #[cfg(target_arch = "x86_64")]
-    pub fn set_guest_debug(&self, addrs: &[GuestAddress], enable_singlestep: bool) -> Result<()> {
-        self.vcpu
-            .set_guest_debug(addrs, enable_singlestep)
-            .map_err(Error::VcpuGuestDebug)
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    pub fn debug_read_registers(&self) -> Result<X86_64CoreRegs> {
-        // General registers: RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, r8-r15
-        let gregs = self.vcpu.get_regs().map_err(Error::ReadRegs)?;
-        let regs = [
-            gregs.rax, gregs.rbx, gregs.rcx, gregs.rdx, gregs.rsi, gregs.rdi, gregs.rbp, gregs.rsp,
-            gregs.r8, gregs.r9, gregs.r10, gregs.r11, gregs.r12, gregs.r13, gregs.r14, gregs.r15,
-        ];
-
-        // GDB exposes 32-bit eflags instead of 64-bit rflags.
-        // https://github.com/bminor/binutils-gdb/blob/master/gdb/features/i386/64bit-core.xml
-        let eflags = gregs.rflags as u32;
-        let rip = gregs.rip;
-
-        // Segment registers: CS, SS, DS, ES, FS, GS
-        let sregs = self.vcpu.get_sregs().map_err(Error::ReadRegs)?;
-        let segments = X86SegmentRegs {
-            cs: sregs.cs.selector as u32,
-            ss: sregs.ss.selector as u32,
-            ds: sregs.ds.selector as u32,
-            es: sregs.es.selector as u32,
-            fs: sregs.fs.selector as u32,
-            gs: sregs.gs.selector as u32,
-        };
-
-        // TODO: Add other registers
-
-        Ok(X86_64CoreRegs {
-            regs,
-            eflags,
-            rip,
-            segments,
-            ..Default::default()
-        })
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    pub fn debug_write_registers(&self, regs: &X86_64CoreRegs) -> Result<()> {
-        let orig_gregs = self.vcpu.get_regs().map_err(Error::ReadRegs)?;
-        let gregs = StandardRegisters {
-            rax: regs.regs[0],
-            rbx: regs.regs[1],
-            rcx: regs.regs[2],
-            rdx: regs.regs[3],
-            rsi: regs.regs[4],
-            rdi: regs.regs[5],
-            rbp: regs.regs[6],
-            rsp: regs.regs[7],
-            r8: regs.regs[8],
-            r9: regs.regs[9],
-            r10: regs.regs[10],
-            r11: regs.regs[11],
-            r12: regs.regs[12],
-            r13: regs.regs[13],
-            r14: regs.regs[14],
-            r15: regs.regs[15],
-            rip: regs.rip,
-            // Update the lower 32-bit of rflags.
-            rflags: (orig_gregs.rflags & !(u32::MAX as u64)) | (regs.eflags as u64),
-        };
-        self.vcpu.set_regs(&gregs).map_err(Error::WriteRegs)?;
-
-        // Segment registers: CS, SS, DS, ES, FS, GS
-        // Since GDB care only selectors, we call get_sregs() first.
-        let mut sregs = self.vcpu.get_sregs().map_err(Error::ReadRegs)?;
-        sregs.cs.selector = regs.segments.cs as u16;
-        sregs.ss.selector = regs.segments.ss as u16;
-        sregs.ds.selector = regs.segments.ds as u16;
-        sregs.es.selector = regs.segments.es as u16;
-        sregs.fs.selector = regs.segments.fs as u16;
-        sregs.gs.selector = regs.segments.gs as u16;
-
-        self.vcpu.set_sregs(&sregs).map_err(Error::WriteRegs)?;
-
-        // TODO: Add other registers
 
         Ok(())
     }
@@ -1430,27 +1338,128 @@ impl CpuManager {
         pptt
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "kvm"))]
     pub fn set_guest_debug(&self, addrs: &[GuestAddress], enable_singlestep: bool) -> Result<()> {
         self.vcpus[0]
             .lock()
             .unwrap()
+            .vcpu
             .set_guest_debug(addrs, enable_singlestep)
+            .map_err(Error::VcpuGuestDebug)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn read_gregs(&self) -> Result<StandardRegisters> {
+        self.vcpus[0]
+            .lock()
+            .unwrap()
+            .vcpu
+            .get_regs()
+            .map_err(Error::ReadRegs)
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    fn read_sregs(&self) -> Result<SpecialRegisters> {
+        self.vcpus[0]
+            .lock()
+            .unwrap()
+            .vcpu
+            .get_sregs()
+            .map_err(Error::ReadRegs)
     }
 
     #[cfg(target_arch = "x86_64")]
     pub fn read_registers(&self) -> Result<X86_64CoreRegs> {
-        self.vcpus[0].lock().unwrap().debug_read_registers()
+        // General registers: RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, r8-r15
+        let gregs = self.read_gregs()?;
+        let regs = [
+            gregs.rax, gregs.rbx, gregs.rcx, gregs.rdx, gregs.rsi, gregs.rdi, gregs.rbp, gregs.rsp,
+            gregs.r8, gregs.r9, gregs.r10, gregs.r11, gregs.r12, gregs.r13, gregs.r14, gregs.r15,
+        ];
+
+        // GDB exposes 32-bit eflags instead of 64-bit rflags.
+        // https://github.com/bminor/binutils-gdb/blob/master/gdb/features/i386/64bit-core.xml
+        let eflags = gregs.rflags as u32;
+        let rip = gregs.rip;
+
+        // Segment registers: CS, SS, DS, ES, FS, GS
+        let sregs = self.read_sregs()?;
+        let segments = X86SegmentRegs {
+            cs: sregs.cs.selector as u32,
+            ss: sregs.ss.selector as u32,
+            ds: sregs.ds.selector as u32,
+            es: sregs.es.selector as u32,
+            fs: sregs.fs.selector as u32,
+            gs: sregs.gs.selector as u32,
+        };
+
+        // TODO: Add other registers
+
+        Ok(X86_64CoreRegs {
+            regs,
+            eflags,
+            rip,
+            segments,
+            ..Default::default()
+        })
     }
 
     #[cfg(target_arch = "x86_64")]
     pub fn write_registers(&self, regs: &X86_64CoreRegs) -> Result<()> {
-        self.vcpus[0].lock().unwrap().debug_write_registers(regs)
+        let orig_gregs = self.read_gregs()?;
+        let gregs = StandardRegisters {
+            rax: regs.regs[0],
+            rbx: regs.regs[1],
+            rcx: regs.regs[2],
+            rdx: regs.regs[3],
+            rsi: regs.regs[4],
+            rdi: regs.regs[5],
+            rbp: regs.regs[6],
+            rsp: regs.regs[7],
+            r8: regs.regs[8],
+            r9: regs.regs[9],
+            r10: regs.regs[10],
+            r11: regs.regs[11],
+            r12: regs.regs[12],
+            r13: regs.regs[13],
+            r14: regs.regs[14],
+            r15: regs.regs[15],
+            rip: regs.rip,
+            // Update the lower 32-bit of rflags.
+            rflags: (orig_gregs.rflags & !(u32::MAX as u64)) | (regs.eflags as u64),
+        };
+        self.vcpus[0]
+            .lock()
+            .unwrap()
+            .vcpu
+            .set_regs(&gregs)
+            .map_err(Error::WriteRegs)?;
+
+        // Segment registers: CS, SS, DS, ES, FS, GS
+        // Since GDB care only selectors, we call get_sregs() first.
+        let mut sregs = self.read_sregs()?;
+        sregs.cs.selector = regs.segments.cs as u16;
+        sregs.ss.selector = regs.segments.ss as u16;
+        sregs.ds.selector = regs.segments.ds as u16;
+        sregs.es.selector = regs.segments.es as u16;
+        sregs.fs.selector = regs.segments.fs as u16;
+        sregs.gs.selector = regs.segments.gs as u16;
+
+        self.vcpus[0]
+            .lock()
+            .unwrap()
+            .vcpu
+            .set_sregs(&sregs)
+            .map_err(Error::WriteRegs)?;
+
+        // TODO: Add other registers
+
+        Ok(())
     }
 
     #[cfg(target_arch = "x86_64")]
     pub fn read_memory(&self, vaddr: GuestAddress, len: usize) -> Result<Vec<u8>> {
-        let sregs = self.vcpus[0].lock().unwrap().read_special_registers()?;
+        let sregs = self.read_sregs()?;
         let mut buf = vec![0; len];
         let mut total_read = 0_u64;
 
@@ -1470,7 +1479,7 @@ impl CpuManager {
 
     #[cfg(target_arch = "x86_64")]
     pub fn write_memory(&self, vaddr: &GuestAddress, data: &[u8]) -> Result<()> {
-        let sregs = self.vcpus[0].lock().unwrap().read_special_registers()?;
+        let sregs = self.read_sregs()?;
         let mut total_written = 0_u64;
 
         while total_written < data.len() as u64 {
@@ -1484,18 +1493,14 @@ impl CpuManager {
                     paddr,
                     &data[total_written as usize..total_written as usize + write_len as usize],
                 )
-                .map_err(Error::ReadMemory)?;
+                .map_err(Error::WriteMemory)?;
             total_written += write_len;
         }
         Ok(())
     }
 
     // return the translated address and the size of the page it resides in.
-    fn guest_phys_addr(
-        &self,
-        vaddr: u64,
-        sregs: &hypervisor::x86_64::SpecialRegisters,
-    ) -> Result<(u64, u64)> {
+    fn guest_phys_addr(&self, vaddr: u64, sregs: &SpecialRegisters) -> Result<(u64, u64)> {
         const CR0_PG_MASK: u64 = 1 << 31;
         const CR4_PAE_MASK: u64 = 1 << 5;
         const CR4_LA57_MASK: u64 = 1 << 12;
