@@ -2466,7 +2466,7 @@ impl Vm {
                     .cpu_manager
                     .lock()
                     .unwrap()
-                    .read_registers()
+                    .gdb_read_registers()
                     .map_err(Error::CpuManager)?;
                 Ok(crate::gdb::GdbResponsePayload::RegValues(Box::new(regs)))
             }
@@ -2474,7 +2474,7 @@ impl Vm {
                 self.cpu_manager
                     .lock()
                     .unwrap()
-                    .write_registers(regs)
+                    .gdb_write_registers(regs)
                     .map_err(Error::CpuManager)?;
                 Ok(crate::gdb::GdbResponsePayload::Empty)
             }
@@ -2483,7 +2483,7 @@ impl Vm {
                     .cpu_manager
                     .lock()
                     .unwrap()
-                    .read_memory(*vaddr, *len)
+                    .gdb_read_memory(*vaddr, *len)
                     .map_err(Error::CpuManager)?;
                 Ok(crate::gdb::GdbResponsePayload::MemoryRegion(mem))
             }
@@ -2491,7 +2491,7 @@ impl Vm {
                 self.cpu_manager
                     .lock()
                     .unwrap()
-                    .write_memory(vaddr, data)
+                    .gdb_write_memory(vaddr, data)
                     .map_err(Error::CpuManager)?;
                 Ok(crate::gdb::GdbResponsePayload::Empty)
             }

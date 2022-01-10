@@ -115,19 +115,10 @@ pub enum Error {
     ScheduleCpuSet,
 
     #[cfg(target_arch = "x86_64")]
-    VcpuGuestDebug(hypervisor::HypervisorCpuError),
+    CpuDebug(hypervisor::HypervisorCpuError),
 
     #[cfg(target_arch = "x86_64")]
-    ReadRegs(hypervisor::HypervisorCpuError),
-
-    #[cfg(target_arch = "x86_64")]
-    WriteRegs(hypervisor::HypervisorCpuError),
-
-    #[cfg(target_arch = "x86_64")]
-    ReadMemory(hypervisor::HypervisorVmError),
-
-    #[cfg(target_arch = "x86_64")]
-    WriteMemory(hypervisor::HypervisorVmError),
+    VmDebug(hypervisor::HypervisorVmError),
 
     TranslatingVirtAddr,
 
@@ -1345,7 +1336,7 @@ impl CpuManager {
             .unwrap()
             .vcpu
             .set_guest_debug(addrs, enable_singlestep)
-            .map_err(Error::VcpuGuestDebug)
+            .map_err(Error::CpuDebug)
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -1355,7 +1346,7 @@ impl CpuManager {
             .unwrap()
             .vcpu
             .get_regs()
-            .map_err(Error::ReadRegs)
+            .map_err(Error::CpuDebug)
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -1365,11 +1356,11 @@ impl CpuManager {
             .unwrap()
             .vcpu
             .get_sregs()
-            .map_err(Error::ReadRegs)
+            .map_err(Error::CpuDebug)
     }
 
     #[cfg(target_arch = "x86_64")]
-    pub fn read_registers(&self) -> Result<X86_64CoreRegs> {
+    pub fn gdb_read_registers(&self) -> Result<X86_64CoreRegs> {
         // General registers: RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, r8-r15
         let gregs = self.read_gregs()?;
         let regs = [
@@ -1405,7 +1396,7 @@ impl CpuManager {
     }
 
     #[cfg(target_arch = "x86_64")]
-    pub fn write_registers(&self, regs: &X86_64CoreRegs) -> Result<()> {
+    pub fn gdb_write_registers(&self, regs: &X86_64CoreRegs) -> Result<()> {
         let orig_gregs = self.read_gregs()?;
         let gregs = StandardRegisters {
             rax: regs.regs[0],
@@ -1433,7 +1424,7 @@ impl CpuManager {
             .unwrap()
             .vcpu
             .set_regs(&gregs)
-            .map_err(Error::WriteRegs)?;
+            .map_err(Error::CpuDebug)?;
 
         // Segment registers: CS, SS, DS, ES, FS, GS
         // Since GDB care only selectors, we call get_sregs() first.
@@ -1450,7 +1441,7 @@ impl CpuManager {
             .unwrap()
             .vcpu
             .set_sregs(&sregs)
-            .map_err(Error::WriteRegs)?;
+            .map_err(Error::CpuDebug)?;
 
         // TODO: Add other registers
 
@@ -1458,7 +1449,7 @@ impl CpuManager {
     }
 
     #[cfg(target_arch = "x86_64")]
-    pub fn read_memory(&self, vaddr: GuestAddress, len: usize) -> Result<Vec<u8>> {
+    pub fn gdb_read_memory(&self, vaddr: GuestAddress, len: usize) -> Result<Vec<u8>> {
         let sregs = self.read_sregs()?;
         let mut buf = vec![0; len];
         let mut total_read = 0_u64;
@@ -1471,14 +1462,14 @@ impl CpuManager {
                     paddr,
                     &mut buf[total_read as usize..total_read as usize + read_len as usize],
                 )
-                .map_err(Error::ReadMemory)?;
+                .map_err(Error::VmDebug)?;
             total_read += read_len;
         }
         Ok(buf)
     }
 
     #[cfg(target_arch = "x86_64")]
-    pub fn write_memory(&self, vaddr: &GuestAddress, data: &[u8]) -> Result<()> {
+    pub fn gdb_write_memory(&self, vaddr: &GuestAddress, data: &[u8]) -> Result<()> {
         let sregs = self.read_sregs()?;
         let mut total_written = 0_u64;
 
@@ -1493,12 +1484,13 @@ impl CpuManager {
                     paddr,
                     &data[total_written as usize..total_written as usize + write_len as usize],
                 )
-                .map_err(Error::WriteMemory)?;
+                .map_err(Error::VmDebug)?;
             total_written += write_len;
         }
         Ok(())
     }
 
+    #[cfg(target_arch = "x86_64")]
     // return the translated address and the size of the page it resides in.
     fn guest_phys_addr(&self, vaddr: u64, sregs: &SpecialRegisters) -> Result<(u64, u64)> {
         const CR0_PG_MASK: u64 = 1 << 31;
