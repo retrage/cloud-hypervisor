@@ -1085,7 +1085,7 @@ impl cpu::Vcpu for KvmVcpu {
 
         Ok(())
     }
-    #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
+    #[cfg(target_arch = "x86_64")]
     ///
     /// Sets debug registers to set hardware breapoints and/or enable single step.
     ///
