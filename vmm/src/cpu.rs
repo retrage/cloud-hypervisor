@@ -26,11 +26,11 @@ use arch::EntryPoint;
 #[cfg(any(target_arch = "aarch64", feature = "acpi"))]
 use arch::NumaNodes;
 use devices::interrupt_controller::InterruptController;
-#[cfg(all(target_arch = "x86_64", feature = "kvm"))]
+#[cfg(all(target_arch = "x86_64", feature = "gdb"))]
 use gdbstub_arch::x86::reg::{X86SegmentRegs, X86_64CoreRegs};
 #[cfg(target_arch = "aarch64")]
 use hypervisor::kvm::kvm_bindings;
-#[cfg(all(target_arch = "x86_64", feature = "kvm"))]
+#[cfg(all(target_arch = "x86_64", feature = "gdb"))]
 use hypervisor::x86_64::{SpecialRegisters, StandardRegisters};
 #[cfg(target_arch = "x86_64")]
 use hypervisor::CpuId;
@@ -43,7 +43,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
 use std::{cmp, io, result, thread};
 use vm_device::BusDevice;
-#[cfg(any(target_arch = "x86_64", feature = "acpi"))]
+#[cfg(feature = "acpi")]
 use vm_memory::GuestAddress;
 use vm_memory::GuestMemoryAtomic;
 use vm_migration::{
@@ -114,14 +114,20 @@ pub enum Error {
     /// Failed scheduling the thread on the expected CPU set.
     ScheduleCpuSet,
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
+    /// Error on debug related CPU ops.
     CpuDebug(hypervisor::HypervisorCpuError),
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
+    /// Error on debug related VM ops.
     VmDebug(hypervisor::HypervisorVmError),
 
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
+    /// Failed to translate guest virtual address.
     TranslatingVirtAddr,
 
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
+    /// Page not present.
     PageNotPresent,
 }
 pub type Result<T> = result::Result<T, Error>;
@@ -774,6 +780,8 @@ impl CpuManager {
     ) -> Result<()> {
         let reset_evt = self.reset_evt.try_clone().unwrap();
         let exit_evt = self.exit_evt.try_clone().unwrap();
+        // TODO: Fix to use conditional build for gdb feature.
+        #[allow(unused_variables)]
         let debug_evt = self.debug_evt.try_clone().unwrap();
         let panic_exit_evt = self.exit_evt.try_clone().unwrap();
         let vcpu_kill_signalled = self.vcpus_kill_signalled.clone();
@@ -877,7 +885,7 @@ impl CpuManager {
                             // vcpu.run() returns false on a triple-fault so trigger a reset
                             match vcpu.lock().unwrap().run() {
                                 Ok(run) => match run {
-                                    #[cfg(target_arch = "x86_64")]
+                                    #[cfg(all(target_arch = "x86_64", feature = "kvm"))]
                                     VmExit::Debug(_) => {
                                         info!("VmExit::Debug");
                                         vcpu_pause_signalled.store(true, Ordering::SeqCst);
@@ -1329,7 +1337,7 @@ impl CpuManager {
         pptt
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "kvm"))]
+    #[cfg(all(target_arch = "x86_64", feature = "kvm", feature = "gdb"))]
     pub fn set_guest_debug(&self, addrs: &[GuestAddress], enable_singlestep: bool) -> Result<()> {
         self.vcpus[0]
             .lock()
@@ -1339,7 +1347,7 @@ impl CpuManager {
             .map_err(Error::CpuDebug)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     fn read_gregs(&self) -> Result<StandardRegisters> {
         self.vcpus[0]
             .lock()
@@ -1349,7 +1357,7 @@ impl CpuManager {
             .map_err(Error::CpuDebug)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     fn read_sregs(&self) -> Result<SpecialRegisters> {
         self.vcpus[0]
             .lock()
@@ -1359,7 +1367,7 @@ impl CpuManager {
             .map_err(Error::CpuDebug)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     pub fn gdb_read_registers(&self) -> Result<X86_64CoreRegs> {
         // General registers: RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, r8-r15
         let gregs = self.read_gregs()?;
@@ -1395,7 +1403,7 @@ impl CpuManager {
         })
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     pub fn gdb_write_registers(&self, regs: &X86_64CoreRegs) -> Result<()> {
         let orig_gregs = self.read_gregs()?;
         let gregs = StandardRegisters {
@@ -1448,7 +1456,7 @@ impl CpuManager {
         Ok(())
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     pub fn gdb_read_memory(&self, vaddr: GuestAddress, len: usize) -> Result<Vec<u8>> {
         let sregs = self.read_sregs()?;
         let mut buf = vec![0; len];
@@ -1468,7 +1476,7 @@ impl CpuManager {
         Ok(buf)
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     pub fn gdb_write_memory(&self, vaddr: &GuestAddress, data: &[u8]) -> Result<()> {
         let sregs = self.read_sregs()?;
         let mut total_written = 0_u64;
@@ -1490,7 +1498,7 @@ impl CpuManager {
         Ok(())
     }
 
-    #[cfg(target_arch = "x86_64")]
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     // return the translated address and the size of the page it resides in.
     fn guest_phys_addr(&self, vaddr: u64, sregs: &SpecialRegisters) -> Result<(u64, u64)> {
         const CR0_PG_MASK: u64 = 1 << 31;

@@ -2409,6 +2409,7 @@ impl Vm {
         self.memory_manager.lock().unwrap().snapshot_data()
     }
 
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     pub fn debug_request(
         &mut self,
         gdb_request: &crate::gdb::GdbRequestPayload,

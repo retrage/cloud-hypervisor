@@ -1321,17 +1321,8 @@ impl Vmm {
         })
     }
 
-    fn vm_debug_request(
-        &mut self,
-        gdb_request: &gdb::GdbRequestPayload,
-    ) -> result::Result<gdb::GdbResponsePayload, VmError> {
-        if let Some(ref mut vm) = self.vm {
-            vm.debug_request(gdb_request)
-        } else {
-            Err(VmError::VmNotRunning)
-        }
-    }
-
+    // TODO: Fix to use conditional build for gdb feature.
+    #[allow(unused_variables)]
     fn control_loop(
         &mut self,
         api_receiver: Arc<Receiver<ApiRequest>>,
@@ -1605,24 +1596,29 @@ impl Vmm {
                             }
                         }
                     }
+                    #[cfg(feature = "gdb")]
                     EpollDispatch::Debug => {
-                        info!("received EpollDispatch::Debug");
                         // Consume the event.
                         self.debug_evt.read().map_err(Error::EventFdRead)?;
 
                         // Read from the API receiver channel
                         let gdb_request = gdb_receiver.recv().map_err(Error::GdbRequestRecv)?;
 
-                        info!("GDB request event: {:?}", gdb_request);
-                        let response = self
-                            .vm_debug_request(&gdb_request.payload)
-                            .map_err(gdb::Error::Vm);
+                        let response = if let Some(ref mut vm) = self.vm {
+                            vm.debug_request(&gdb_request.payload)
+                        } else {
+                            Err(VmError::VmNotRunning)
+                        }
+                        .map_err(gdb::Error::Vm);
 
                         gdb_request
                             .sender
                             .send(response)
                             .map_err(Error::GdbResponseSend)?;
                     }
+                    // TODO: Remove the following pattern.
+                    #[allow(unreachable_patterns)]
+                    _ => {}
                 }
             }
         }
