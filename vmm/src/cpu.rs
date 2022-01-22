@@ -124,11 +124,7 @@ pub enum Error {
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     /// Failed to translate guest virtual address.
-    TranslatingVirtAddr,
-
-    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
-    /// Page not present.
-    PageNotPresent,
+    TranslateVirtualAddress(hypervisor::HypervisorCpuError),
 }
 pub type Result<T> = result::Result<T, Error>;
 
@@ -1527,11 +1523,19 @@ impl CpuManager {
                     (curr_table_addr & PTE_ADDR_MASK) + page_table_offset(vaddr, level),
                     &mut ent_bytes,
                 )
-                .map_err(|_| Error::TranslatingVirtAddr)?;
+                .map_err(|e| {
+                    Error::TranslateVirtualAddress(
+                        hypervisor::HypervisorCpuError::TranslateVirtualAddress(e.into()),
+                    )
+                })?;
             let ent = u64::from_ne_bytes(ent_bytes);
 
             if ent & PAGE_PRESENT == 0 {
-                return Err(Error::PageNotPresent);
+                return Err(Error::TranslateVirtualAddress(
+                    hypervisor::HypervisorCpuError::TranslateVirtualAddress(anyhow!(
+                        "Page not present"
+                    )),
+                ));
             }
             Ok(ent)
         }
@@ -1553,7 +1557,11 @@ impl CpuManager {
         }
 
         if sregs.cr4 & CR4_PAE_MASK == 0 {
-            return Err(Error::TranslatingVirtAddr);
+            return Err(Error::TranslateVirtualAddress(
+                hypervisor::HypervisorCpuError::TranslateVirtualAddress(anyhow!(
+                    "Failed to translate guest virtual address"
+                )),
+            ));
         }
 
         if sregs.efer & MSR_EFER_LMA != 0 {
@@ -1577,7 +1585,11 @@ impl CpuManager {
             let paddr = p1_ent & PTE_ADDR_MASK | page_offset(vaddr, PAGE_SIZE_4K);
             return Ok((paddr, PAGE_SIZE_4K));
         }
-        Err(Error::TranslatingVirtAddr)
+        Err(Error::TranslateVirtualAddress(
+            hypervisor::HypervisorCpuError::TranslateVirtualAddress(anyhow!(
+                "Failed to translate virtual address"
+            )),
+        ))
     }
 
     pub fn vcpus_pause_signalled(&self) -> bool {
