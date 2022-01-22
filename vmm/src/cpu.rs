@@ -1454,12 +1454,12 @@ impl CpuManager {
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     pub fn gdb_read_memory(&self, vaddr: GuestAddress, len: usize) -> Result<Vec<u8>> {
-        let sregs = self.read_sregs()?;
         let mut buf = vec![0; len];
         let mut total_read = 0_u64;
 
         while total_read < len as u64 {
-            let (paddr, psize) = self.guest_phys_addr(vaddr.0 + total_read, &sregs)?;
+            let paddr = self.translate_gva(vaddr.0 + total_read)?;
+            let psize = 0x1000;
             let read_len = std::cmp::min(len as u64 - total_read, psize - (paddr & (psize - 1)));
             self.vmmops
                 .guest_mem_read(
@@ -1474,11 +1474,11 @@ impl CpuManager {
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     pub fn gdb_write_memory(&self, vaddr: &GuestAddress, data: &[u8]) -> Result<()> {
-        let sregs = self.read_sregs()?;
         let mut total_written = 0_u64;
 
         while total_written < data.len() as u64 {
-            let (paddr, psize) = self.guest_phys_addr(vaddr.0 + total_written, &sregs)?;
+            let paddr = self.translate_gva(vaddr.0 + total_written)?;
+            let psize = 0x1000;
             let write_len = std::cmp::min(
                 data.len() as u64 - total_written,
                 psize - (paddr & (psize - 1)),
@@ -1496,100 +1496,13 @@ impl CpuManager {
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     // return the translated address and the size of the page it resides in.
-    fn guest_phys_addr(&self, vaddr: u64, sregs: &SpecialRegisters) -> Result<(u64, u64)> {
-        const CR0_PG_MASK: u64 = 1 << 31;
-        const CR4_PAE_MASK: u64 = 1 << 5;
-        const CR4_LA57_MASK: u64 = 1 << 12;
-        const MSR_EFER_LMA: u64 = 1 << 10;
-        // bits 12 through 51 are the address in a PTE.
-        const PTE_ADDR_MASK: u64 = ((1 << 52) - 1) & !0x0fff;
-        const PAGE_PRESENT: u64 = 0x1;
-        const PAGE_PSE_MASK: u64 = 0x1 << 7;
-
-        const PAGE_SIZE_4K: u64 = 4 * 1024;
-        const PAGE_SIZE_2M: u64 = 2 * 1024 * 1024;
-        const PAGE_SIZE_1G: u64 = 1024 * 1024 * 1024;
-
-        fn next_pte(
-            cpu_manager: &CpuManager,
-            curr_table_addr: u64,
-            vaddr: u64,
-            level: usize,
-        ) -> Result<u64> {
-            let mut ent_bytes = [0_u8; 8];
-            cpu_manager
-                .vmmops
-                .guest_mem_read(
-                    (curr_table_addr & PTE_ADDR_MASK) + page_table_offset(vaddr, level),
-                    &mut ent_bytes,
-                )
-                .map_err(|e| {
-                    Error::TranslateVirtualAddress(
-                        hypervisor::HypervisorCpuError::TranslateVirtualAddress(e.into()),
-                    )
-                })?;
-            let ent = u64::from_ne_bytes(ent_bytes);
-
-            if ent & PAGE_PRESENT == 0 {
-                return Err(Error::TranslateVirtualAddress(
-                    hypervisor::HypervisorCpuError::TranslateVirtualAddress(anyhow!(
-                        "Page not present"
-                    )),
-                ));
-            }
-            Ok(ent)
-        }
-
-        // Get the offset in to the page of `vaddr`.
-        fn page_offset(vaddr: u64, page_size: u64) -> u64 {
-            vaddr & (page_size - 1)
-        }
-
-        // Get the offset in to the page table of the given `level` specified by the virtual `address`.
-        // `level` is 1 through 5 in x86_64 to handle the five levels of paging.
-        fn page_table_offset(addr: u64, level: usize) -> u64 {
-            let offset = (level - 1) * 9 + 12;
-            ((addr >> offset) & 0x1ff) << 3
-        }
-
-        if sregs.cr0 & CR0_PG_MASK == 0 {
-            return Ok((vaddr, PAGE_SIZE_4K));
-        }
-
-        if sregs.cr4 & CR4_PAE_MASK == 0 {
-            return Err(Error::TranslateVirtualAddress(
-                hypervisor::HypervisorCpuError::TranslateVirtualAddress(anyhow!(
-                    "Failed to translate guest virtual address"
-                )),
-            ));
-        }
-
-        if sregs.efer & MSR_EFER_LMA != 0 {
-            // TODO - check LA57
-            if sregs.cr4 & CR4_LA57_MASK != 0 {}
-            let p4_ent = next_pte(self, sregs.cr3, vaddr, 4)?;
-            let p3_ent = next_pte(self, p4_ent, vaddr, 3)?;
-            // TODO check if it's a 1G page with the PSE bit in p2_ent
-            if p3_ent & PAGE_PSE_MASK != 0 {
-                // It's a 1G page with the PSE bit in p3_ent
-                let paddr = p3_ent & PTE_ADDR_MASK | page_offset(vaddr, PAGE_SIZE_1G);
-                return Ok((paddr, PAGE_SIZE_1G));
-            }
-            let p2_ent = next_pte(self, p3_ent, vaddr, 2)?;
-            if p2_ent & PAGE_PSE_MASK != 0 {
-                // It's a 2M page with the PSE bit in p2_ent
-                let paddr = p2_ent & PTE_ADDR_MASK | page_offset(vaddr, PAGE_SIZE_2M);
-                return Ok((paddr, PAGE_SIZE_2M));
-            }
-            let p1_ent = next_pte(self, p2_ent, vaddr, 1)?;
-            let paddr = p1_ent & PTE_ADDR_MASK | page_offset(vaddr, PAGE_SIZE_4K);
-            return Ok((paddr, PAGE_SIZE_4K));
-        }
-        Err(Error::TranslateVirtualAddress(
-            hypervisor::HypervisorCpuError::TranslateVirtualAddress(anyhow!(
-                "Failed to translate virtual address"
-            )),
-        ))
+    fn translate_gva(&self, gva: u64) -> Result<u64> {
+        self.vcpus[0]
+            .lock()
+            .unwrap()
+            .vcpu
+            .translate_gva(gva)
+            .map_err(|e| Error::TranslateVirtualAddress(e))
     }
 
     pub fn vcpus_pause_signalled(&self) -> bool {
