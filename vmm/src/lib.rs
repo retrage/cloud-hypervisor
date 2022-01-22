@@ -310,7 +310,8 @@ pub fn start_vmm_thread(
         .name("gdb".to_owned())
         .spawn(move || {
             gdb::gdb_thread(
-                target, 1234, /* TODO: Use supplied number from arguments */
+                target,
+                "/tmp/ch-gdb-sock", /* TODO: Use supplied path from arguments */
             )
         })
         .map_err(Error::GdbThreadSpawn)?;

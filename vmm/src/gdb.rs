@@ -1,4 +1,4 @@
-use std::{net::TcpListener, sync::mpsc};
+use std::{os::unix::net::UnixListener, sync::mpsc};
 
 use gdbstub::{
     arch::Arch,
@@ -80,16 +80,15 @@ pub enum GdbResponseEventKind {
     SetHwBreakPoint,
 }
 
-pub fn gdb_thread(mut gdbstub: GdbStub, port: u32) {
-    let addr = format!("0.0.0.0:{}", port);
-    let listener = match TcpListener::bind(addr.clone()) {
+pub fn gdb_thread(mut gdbstub: GdbStub, path: &str) {
+    let listener = match UnixListener::bind(path) {
         Ok(s) => s,
         Err(e) => {
             error!("Failed to create a TCP listener: {}", e);
             return;
         }
     };
-    info!("Waiting for a GDB connection on {:?}...", addr);
+    info!("Waiting for a GDB connection on {}...", path);
 
     let (stream, addr) = match listener.accept() {
         Ok(v) => v,
@@ -98,7 +97,7 @@ pub fn gdb_thread(mut gdbstub: GdbStub, port: u32) {
             return;
         }
     };
-    info!("GDB connected from {}", addr);
+    info!("GDB connected from {:?}", addr);
 
     let connection: Box<dyn Connection<Error = std::io::Error>> = Box::new(stream);
     let mut gdb = gdbstub::GdbStub::new(connection);
