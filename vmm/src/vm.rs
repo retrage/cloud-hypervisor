@@ -2058,28 +2058,6 @@ impl Vm {
             self.vm.tdx_finalize().map_err(Error::FinalizeTdx)?;
         }
 
-        /*
-        if new_state == VmState::BreakPoint {
-            loop {
-                match self.debug_evt.read() {
-                    Ok(v) => {
-                        if v == crate::gdb::GdbResponseEventKind::Resume as u64 {
-                            // GDB connection created.
-                            info!("v: {} GDB Connected. Continue running...", v);
-                            new_state = VmState::Running;
-                            break;
-                        }
-                        continue;
-                    },
-                    Err(_) => {
-                        // TODO: Check if error is EAGAIN
-                        continue;
-                    }
-                }
-            }
-        }
-        */
-
         if new_state == VmState::Running {
             self.cpu_manager
                 .lock()
