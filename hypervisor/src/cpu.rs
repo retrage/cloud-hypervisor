@@ -259,7 +259,7 @@ pub enum VmExit<'a> {
     Shutdown,
     Hyperv,
     #[cfg(feature = "kvm")]
-    Debug(kvm_bindings::kvm_debug_exit_arch),
+    Debug,
 }
 
 ///

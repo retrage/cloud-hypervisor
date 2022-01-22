@@ -882,7 +882,7 @@ impl CpuManager {
                             match vcpu.lock().unwrap().run() {
                                 Ok(run) => match run {
                                     #[cfg(all(target_arch = "x86_64", feature = "kvm"))]
-                                    VmExit::Debug(_) => {
+                                    VmExit::Debug => {
                                         info!("VmExit::Debug");
                                         vcpu_pause_signalled.store(true, Ordering::SeqCst);
                                         debug_evt.write(256).unwrap(); // TODO: Fix event number
