@@ -395,7 +395,7 @@ pub trait Vcpu: Send + Sync {
     fn notify_guest_clock_paused(&self) -> Result<()>;
     #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
     ///
-    /// Sets debug registers to set hardware breapoints and/or enable single step.
+    /// Sets debug registers to set hardware breakpoints and/or enable single step.
     ///
     fn set_guest_debug(&self, addrs: &[GuestAddress], enable_singlestep: bool) -> Result<()>;
     ///

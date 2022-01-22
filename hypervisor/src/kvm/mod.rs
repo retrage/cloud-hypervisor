@@ -1087,7 +1087,7 @@ impl cpu::Vcpu for KvmVcpu {
     }
     #[cfg(target_arch = "x86_64")]
     ///
-    /// Sets debug registers to set hardware breapoints and/or enable single step.
+    /// Sets debug registers to set hardware breakpoints and/or enable single step.
     ///
     fn set_guest_debug(
         &self,
@@ -1111,7 +1111,7 @@ impl cpu::Vcpu for KvmVcpu {
 
         // Set bits 9 and 10.
         // bit 9: GE (global exact breakpoint enable) flag.
-        // biit 10: always 1.
+        // bit 10: always 1.
         dbg.arch.debugreg[7] = 0x0600;
 
         for (i, addr) in addrs.iter().enumerate() {
