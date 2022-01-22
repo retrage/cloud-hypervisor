@@ -55,6 +55,7 @@ pub mod config;
 pub mod cpu;
 pub mod device_manager;
 pub mod device_tree;
+#[cfg(feature = "gdb")]
 mod gdb;
 pub mod interrupt;
 pub mod memory_manager;
@@ -145,14 +146,17 @@ pub enum Error {
     #[error("Error creation API server's socket {0:?}")]
     CreateApiServerSocket(#[source] io::Error),
 
+    #[cfg(feature = "gdb")]
     #[error("Failed to start the GDB thread: {0}")]
     GdbThreadSpawn(io::Error),
 
     /// GDB request receive error
+    #[cfg(feature = "gdb")]
     #[error("Error receiving GDB request: {0}")]
     GdbRequestRecv(#[source] RecvError),
 
     /// GDB response send error
+    #[cfg(feature = "gdb")]
     #[error("Error sending GDB request: {0}")]
     GdbResponseSend(#[source] SendError<gdb::GdbResponse>),
 }
@@ -239,6 +243,7 @@ impl Serialize for PciDeviceInfo {
     }
 }
 
+#[allow(unused_variables)]
 #[allow(clippy::too_many_arguments)]
 pub fn start_vmm_thread(
     vmm_version: String,
@@ -247,14 +252,17 @@ pub fn start_vmm_thread(
     api_event: EventFd,
     api_sender: Sender<ApiRequest>,
     api_receiver: Receiver<ApiRequest>,
+    debug_path: Option<String>,
     debug_event: EventFd,
     seccomp_action: &SeccompAction,
     hypervisor: Arc<dyn hypervisor::Hypervisor>,
 ) -> Result<thread::JoinHandle<Result<()>>> {
+    #[cfg(feature = "gdb")]
     let (gdb_sender, gdb_receiver) = std::sync::mpsc::channel();
+    #[cfg(feature = "gdb")]
+    let gdb_debug_event = debug_event.try_clone().map_err(Error::EventFdClone)?;
 
     let http_api_event = api_event.try_clone().map_err(Error::EventFdClone)?;
-    let gdb_debug_event = debug_event.try_clone().map_err(Error::EventFdClone)?;
 
     // Retrieve seccomp filter
     let vmm_seccomp_filter =
@@ -281,7 +289,11 @@ pub fn start_vmm_thread(
                     exit_evt,
                 )?;
 
-                vmm.control_loop(Arc::new(api_receiver), Arc::new(gdb_receiver))
+                vmm.control_loop(
+                    Arc::new(api_receiver),
+                    #[cfg(feature = "gdb")]
+                    Arc::new(gdb_receiver),
+                )
             })
             .map_err(Error::VmmThreadSpawn)?
     };
@@ -305,16 +317,14 @@ pub fn start_vmm_thread(
         )?;
     }
 
-    let target = gdb::GdbStub::new(gdb_sender, gdb_debug_event);
-    thread::Builder::new()
-        .name("gdb".to_owned())
-        .spawn(move || {
-            gdb::gdb_thread(
-                target,
-                "/tmp/ch-gdb-sock", /* TODO: Use supplied path from arguments */
-            )
-        })
-        .map_err(Error::GdbThreadSpawn)?;
+    #[cfg(feature = "gdb")]
+    if let Some(debug_path) = debug_path {
+        let target = gdb::GdbStub::new(gdb_sender, gdb_debug_event);
+        thread::Builder::new()
+            .name("gdb".to_owned())
+            .spawn(move || gdb::gdb_thread(target, &debug_path))
+            .map_err(Error::GdbThreadSpawn)?;
+    }
 
     Ok(thread)
 }
@@ -1327,7 +1337,7 @@ impl Vmm {
     fn control_loop(
         &mut self,
         api_receiver: Arc<Receiver<ApiRequest>>,
-        gdb_receiver: Arc<Receiver<gdb::GdbRequest>>,
+        #[cfg(feature = "gdb")] gdb_receiver: Arc<Receiver<gdb::GdbRequest>>,
     ) -> Result<()> {
         const EPOLL_EVENTS_LEN: usize = 100;
 

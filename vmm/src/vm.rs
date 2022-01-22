@@ -1986,8 +1986,15 @@ impl Vm {
             return self.resume().map_err(Error::Resume);
         }
 
-        let new_state = VmState::Created;
-        // current_state.valid_transition(new_state)?;
+        // TODO: Fix below as it does not consider --gdb is not supplied but feature = "gdb".
+        let new_state = if cfg!(feature = "gdb") {
+            VmState::Created
+        } else {
+            VmState::Running
+        };
+        if new_state != current_state {
+            current_state.valid_transition(new_state)?;
+        }
 
         // Load kernel if configured
         let entry_point = if self.kernel.as_ref().is_some() {

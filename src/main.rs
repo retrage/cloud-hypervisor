@@ -378,8 +378,15 @@ fn create_app<'a>(
             .group("vm-config"),
     );
 
-    #[cfg(all(target_arch = "x86_64", feature = "kvm"))]
-    let app = app.arg(Arg::new("gdb").long("gdb").help("Enable GDB debugging"));
+    #[cfg(feature = "gdb")]
+    let app = app.arg(
+        Arg::new("gdb")
+            .long("gdb")
+            .help("Enable GDB debugging: path=<socket path>")
+            .help("GDB socket (UNIX domain socket): path=</path/to/a/file> or fd=<fd>.")
+            .takes_value(true)
+            .group("vmm-config"),
+    );
 
     #[cfg(feature = "tdx")]
     let app = app.arg(
@@ -520,6 +527,15 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
     let hypervisor = hypervisor::new().map_err(Error::CreateHypervisor)?;
 
     let debug_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateDebugEventFd)?;
+    let gdb_socket_path = if let Some(gdb_config) = cmd_arguments.value_of("gdb") {
+        let mut parser = OptionParser::new();
+        parser.add("path");
+        parser.parse(gdb_config).unwrap_or_default();
+
+        parser.get("path")
+    } else {
+        None
+    };
 
     let vmm_thread = vmm::start_vmm_thread(
         env!("CARGO_PKG_VERSION").to_string(),
@@ -528,6 +544,7 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
         api_evt.try_clone().unwrap(),
         http_sender,
         api_request_receiver,
+        gdb_socket_path.map(String::from),
         debug_evt.try_clone().unwrap(),
         &seccomp_action,
         hypervisor,
