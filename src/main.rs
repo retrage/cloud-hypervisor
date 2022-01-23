@@ -382,8 +382,7 @@ fn create_app<'a>(
     let app = app.arg(
         Arg::new("gdb")
             .long("gdb")
-            .help("Enable GDB debugging: path=<socket path>")
-            .help("GDB socket (UNIX domain socket): path=</path/to/a/file> or fd=<fd>.")
+            .help("GDB socket (UNIX domain socket): path=</path/to/a/file>")
             .takes_value(true)
             .group("vmm-config"),
     );
