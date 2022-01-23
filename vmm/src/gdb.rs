@@ -84,7 +84,7 @@ pub fn gdb_thread(mut gdbstub: GdbStub, path: &str) {
     let listener = match UnixListener::bind(path) {
         Ok(s) => s,
         Err(e) => {
-            error!("Failed to create a TCP listener: {}", e);
+            error!("Failed to create a Unix domain socket listener: {}", e);
             return;
         }
     };
