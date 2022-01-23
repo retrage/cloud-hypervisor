@@ -410,7 +410,7 @@ impl Vmm {
         }
     }
 
-    fn vm_boot(&mut self) -> result::Result<(), VmError> {
+    fn vm_boot(&mut self, stop_vm: bool) -> result::Result<(), VmError> {
         // If we don't have a config, we can not boot a VM.
         if self.vm_config.is_none() {
             return Err(VmError::VmMissingConfig);
@@ -446,7 +446,7 @@ impl Vmm {
 
         // Now we can boot the VM.
         if let Some(ref mut vm) = self.vm {
-            vm.boot()
+            vm.boot(stop_vm)
         } else {
             Err(VmError::VmNotCreated)
         }
@@ -591,7 +591,8 @@ impl Vmm {
 
         // Then we start the new VM.
         if let Some(ref mut vm) = self.vm {
-            vm.boot()
+            // TODO: Add stop_vm
+            vm.boot(false)
         } else {
             Err(VmError::VmNotCreated)
         }
@@ -1419,9 +1420,9 @@ impl Vmm {
 
                                 sender.send(response).map_err(Error::ApiResponseSend)?;
                             }
-                            ApiRequest::VmBoot(sender) => {
+                            ApiRequest::VmBoot(stop_vm, sender) => {
                                 let response = self
-                                    .vm_boot()
+                                    .vm_boot(stop_vm)
                                     .map_err(ApiError::VmBoot)
                                     .map(|_| ApiResponsePayload::Empty);
 

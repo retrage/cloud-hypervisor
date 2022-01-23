@@ -187,7 +187,9 @@ impl EndpointHandler for VmActionHandler {
             }
         } else {
             match self.action {
-                Boot => vm_boot(api_notifier, api_sender).map_err(HttpError::VmBoot),
+                Boot(stop_vm) => {
+                    vm_boot(api_notifier, api_sender, stop_vm).map_err(HttpError::VmBoot)
+                }
                 Delete => vm_delete(api_notifier, api_sender).map_err(HttpError::VmDelete),
                 Shutdown => vm_shutdown(api_notifier, api_sender).map_err(HttpError::VmShutdown),
                 Reboot => vm_reboot(api_notifier, api_sender).map_err(HttpError::VmReboot),

@@ -228,7 +228,8 @@ pub enum ApiRequest {
     /// Boot the previously created virtual machine.
     /// If the VM was not previously created, the VMM API server will send a
     /// VmBoot error back.
-    VmBoot(Sender<ApiResponse>),
+    /// The stop_vm indicates if the VM should be stopped when booting.
+    VmBoot(bool /* stop_vm */, Sender<ApiResponse>),
 
     /// Delete the previously created virtual machine.
     /// If the VM was not previously created, the VMM API server will send a
@@ -335,7 +336,7 @@ pub fn vm_create(
 /// that only differ by the IPC command they send.
 pub enum VmAction {
     /// Boot a VM
-    Boot,
+    Boot(bool /* stop_vm */),
 
     /// Delete a VM
     Delete,
@@ -410,7 +411,7 @@ fn vm_action(
 
     use VmAction::*;
     let request = match action {
-        Boot => ApiRequest::VmBoot(response_sender),
+        Boot(stop_vm) => ApiRequest::VmBoot(stop_vm, response_sender),
         Delete => ApiRequest::VmDelete(response_sender),
         Shutdown => ApiRequest::VmShutdown(response_sender),
         Reboot => ApiRequest::VmReboot(response_sender),
@@ -447,8 +448,12 @@ fn vm_action(
     Ok(body)
 }
 
-pub fn vm_boot(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> ApiResult<Option<Body>> {
-    vm_action(api_evt, api_sender, VmAction::Boot)
+pub fn vm_boot(
+    api_evt: EventFd,
+    api_sender: Sender<ApiRequest>,
+    stop_vm: bool,
+) -> ApiResult<Option<Body>> {
+    vm_action(api_evt, api_sender, VmAction::Boot(stop_vm))
 }
 
 pub fn vm_delete(api_evt: EventFd, api_sender: Sender<ApiRequest>) -> ApiResult<Option<Body>> {

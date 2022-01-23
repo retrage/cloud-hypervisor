@@ -1978,7 +1978,7 @@ impl Vm {
         Some(rsdp_addr)
     }
 
-    pub fn boot(&mut self) -> Result<()> {
+    pub fn boot(&mut self, stop_vm: bool) -> Result<()> {
         info!("Booting VM");
         event!("vm", "booting");
         let current_state = self.get_state()?;
@@ -1987,7 +1987,7 @@ impl Vm {
         }
 
         // TODO: Fix below as it does not consider --gdb is not supplied but feature = "gdb".
-        let new_state = if cfg!(feature = "gdb") {
+        let new_state = if stop_vm {
             VmState::Created
         } else {
             VmState::Running
@@ -2065,7 +2065,7 @@ impl Vm {
             self.vm.tdx_finalize().map_err(Error::FinalizeTdx)?;
         }
 
-        if new_state == VmState::Running {
+        if !stop_vm {
             self.cpu_manager
                 .lock()
                 .unwrap()

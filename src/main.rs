@@ -535,6 +535,7 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
     } else {
         None
     };
+    let stop_vm = gdb_socket_path.is_some();
 
     let vmm_thread = vmm::start_vmm_thread(
         env!("CARGO_PKG_VERSION").to_string(),
@@ -571,7 +572,7 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
             Arc::new(Mutex::new(vm_config)),
         )
         .map_err(Error::VmCreate)?;
-        vmm::api::vm_boot(api_evt.try_clone().unwrap(), sender).map_err(Error::VmBoot)?;
+        vmm::api::vm_boot(api_evt.try_clone().unwrap(), sender, stop_vm).map_err(Error::VmBoot)?;
     } else if let Some(restore_params) = cmd_arguments.value_of("restore") {
         vmm::api::vm_restore(
             api_evt.try_clone().unwrap(),
