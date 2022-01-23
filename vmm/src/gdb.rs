@@ -63,7 +63,7 @@ pub enum GdbRequestPayload {
     WriteMem(vm_memory::GuestAddress, Vec<u8>),
     Pause,
     Resume,
-    EnableSingleStep,
+    SetSingleStep(bool),
     SetHwBreakPoint(Vec<vm_memory::GuestAddress>),
 }
 
@@ -76,7 +76,7 @@ pub enum GdbResponseEventKind {
     WriteMem,
     Pause,
     Resume,
-    EnableSingleStep,
+    SetSingleStep,
     SetHwBreakPoint,
 }
 
@@ -151,7 +151,7 @@ impl GdbStub {
             GdbRequestPayload::WriteMem(_, _) => GdbResponseEventKind::WriteMem,
             GdbRequestPayload::Pause => GdbResponseEventKind::Pause,
             GdbRequestPayload::Resume => GdbResponseEventKind::Resume,
-            GdbRequestPayload::EnableSingleStep => GdbResponseEventKind::EnableSingleStep,
+            GdbRequestPayload::SetSingleStep(_) => GdbResponseEventKind::SetSingleStep,
             GdbRequestPayload::SetHwBreakPoint(_) => GdbResponseEventKind::SetHwBreakPoint,
         };
         self.gdb_sender
@@ -188,13 +188,11 @@ impl SingleThreadOps for GdbStub {
     ) -> Result<StopReason<ArchUsize>, Self::Error> {
         let single_step = ResumeAction::Step == action;
 
-        if single_step {
-            match self.vm_request(GdbRequestPayload::EnableSingleStep) {
-                Ok(_) => {}
-                Err(e) => {
-                    error!("Failed to request EnableSingleStep: {:?}", e);
-                    return Err("Failed to request EnableSingleStep");
-                }
+        match self.vm_request(GdbRequestPayload::SetSingleStep(single_step)) {
+            Ok(_) => {}
+            Err(e) => {
+                error!("Failed to request SetSingleStep: {:?}", e);
+                return Err("Failed to request SetSingleStep");
             }
         }
 

@@ -2400,11 +2400,11 @@ impl Vm {
         gdb_request: &crate::gdb::GdbRequestPayload,
     ) -> Result<crate::gdb::GdbResponsePayload> {
         match gdb_request {
-            crate::gdb::GdbRequestPayload::EnableSingleStep => {
+            crate::gdb::GdbRequestPayload::SetSingleStep(single_step) => {
                 self.cpu_manager
                     .lock()
                     .unwrap()
-                    .set_guest_debug(&[], true)
+                    .set_guest_debug(&[], *single_step)
                     .map_err(Error::CpuManager)?;
                 Ok(crate::gdb::GdbResponsePayload::Empty)
             }
