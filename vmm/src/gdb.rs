@@ -2,17 +2,22 @@ use std::{os::unix::net::UnixListener, sync::mpsc};
 
 use gdbstub::{
     arch::Arch,
+    common::Signal,
+    conn::{Connection, ConnectionExt},
+    stub::{run_blocking, DisconnectReason, SingleThreadStopReason},
     target::{
         ext::{
             base::{
-                singlethread::{ResumeAction, SingleThreadOps, StopReason},
-                BaseOps, GdbInterrupt,
+                singlethread::{
+                    SingleThreadBase, SingleThreadResume, SingleThreadResumeOps,
+                    SingleThreadSingleStep, SingleThreadSingleStepOps,
+                },
+                BaseOps,
             },
             breakpoints::{Breakpoints, BreakpointsOps, HwBreakpoint, HwBreakpointOps},
         },
         Target, TargetError, TargetResult,
     },
-    Connection,
 };
 #[cfg(target_arch = "x86_64")]
 use gdbstub_arch::x86::reg::X86_64CoreRegs as CoreRegs;
@@ -99,21 +104,33 @@ pub fn gdb_thread(mut gdbstub: GdbStub, path: &str) {
     };
     info!("GDB connected from {:?}", addr);
 
-    let connection: Box<dyn Connection<Error = std::io::Error>> = Box::new(stream);
-    let mut gdb = gdbstub::GdbStub::new(connection);
+    let connection: Box<dyn ConnectionExt<Error = std::io::Error>> = Box::new(stream);
+    let gdb = gdbstub::stub::GdbStub::new(connection);
 
-    match gdb.run(&mut gdbstub) {
-        Ok(reason) => {
-            info!("GDB session closed: {:?}", reason);
-        }
+    match gdb.run_blocking::<GdbEventLoop>(&mut gdbstub) {
+        Ok(disconnect_reason) => match disconnect_reason {
+            DisconnectReason::Disconnect => {
+                info!("GDB client has disconnected. Running...");
+
+                if let Err(e) = gdbstub.vm_request(GdbRequestPayload::SetSingleStep(false)) {
+                    error!("Failed to disable single step: {:?}", e);
+                }
+
+                if let Err(e) = gdbstub.vm_request(GdbRequestPayload::SetHwBreakPoint(Vec::new())) {
+                    error!("Failed to remove breakpoints: {:?}", e);
+                }
+
+                if let Err(e) = gdbstub.vm_request(GdbRequestPayload::Resume) {
+                    error!("Failed to resume the VM: {:?}", e);
+                }
+            }
+            _ => {
+                error!("Target exited or terminated");
+            }
+        },
         Err(e) => {
             error!("error occurred in GDB session: {}", e);
         }
-    }
-
-    // Resume the VM when GDB session is disconnected.
-    if let Err(e) = gdbstub.vm_request(GdbRequestPayload::Resume) {
-        error!("Failed to resume the VM after GDB disconnected: {:?}", e);
     }
 }
 
@@ -121,19 +138,24 @@ pub fn gdb_thread(mut gdbstub: GdbStub, path: &str) {
 pub struct GdbStub {
     gdb_sender: mpsc::Sender<GdbRequest>,
     gdb_event: vmm_sys_util::eventfd::EventFd,
+    vm_event: vmm_sys_util::eventfd::EventFd,
 
     hw_breakpoints: Vec<vm_memory::GuestAddress>,
+    single_step: bool,
 }
 
 impl GdbStub {
     pub fn new(
         gdb_sender: mpsc::Sender<GdbRequest>,
         gdb_event: vmm_sys_util::eventfd::EventFd,
+        vm_event: vmm_sys_util::eventfd::EventFd,
     ) -> Self {
         Self {
             gdb_sender,
             gdb_event,
+            vm_event,
             hw_breakpoints: Default::default(),
+            single_step: false,
         }
     }
 
@@ -168,77 +190,26 @@ impl GdbStub {
 }
 
 impl Target for GdbStub {
-    type Arch = GdbArch<()>;
+    type Arch = GdbArch;
     type Error = &'static str;
 
+    #[inline(always)]
     fn base_ops(&mut self) -> BaseOps<Self::Arch, Self::Error> {
         BaseOps::SingleThread(self)
     }
 
-    fn breakpoints(&mut self) -> Option<BreakpointsOps<Self>> {
+    #[inline(always)]
+    fn support_breakpoints(&mut self) -> Option<BreakpointsOps<Self>> {
         Some(self)
+    }
+
+    #[inline(always)]
+    fn guard_rail_implicit_sw_breakpoints(&self) -> bool {
+        true
     }
 }
 
-impl SingleThreadOps for GdbStub {
-    fn resume(
-        &mut self,
-        action: ResumeAction,
-        gdb_interrupt: GdbInterrupt<'_>,
-    ) -> Result<StopReason<ArchUsize>, Self::Error> {
-        let single_step = ResumeAction::Step == action;
-
-        match self.vm_request(GdbRequestPayload::SetSingleStep(single_step)) {
-            Ok(_) => {}
-            Err(e) => {
-                error!("Failed to request SetSingleStep: {:?}", e);
-                return Err("Failed to request SetSingleStep");
-            }
-        }
-
-        match self.vm_request(GdbRequestPayload::Resume) {
-            Ok(_) => {}
-            Err(e) => {
-                error!("Failed to resume the target: {:?}", e);
-                return Err("Failed to resume the target");
-            }
-        }
-
-        let mut check_gdb_interrupt = gdb_interrupt.no_async();
-        // Polling
-        loop {
-            match self.gdb_event.read() {
-                Ok(v) => {
-                    if v == 256 {
-                        info!("Received VmExit::Debug");
-                        self.vm_request(GdbRequestPayload::Pause).map_err(|e| {
-                            error!("Failed to pause the target: {:?}", e);
-                            "Failed to pause the target"
-                        })?;
-                        if single_step {
-                            return Ok(StopReason::DoneStep);
-                        } else {
-                            return Ok(StopReason::HwBreak);
-                        }
-                    }
-                }
-                Err(e) => {
-                    if e.kind() != std::io::ErrorKind::WouldBlock {
-                        error!("Failed to read gdb_event: {:?}", e);
-                    }
-                }
-            }
-
-            if check_gdb_interrupt.pending() {
-                self.vm_request(GdbRequestPayload::Pause).map_err(|e| {
-                    error!("Failed to pause the target: {:?}", e);
-                    "Failed to pause the target"
-                })?;
-                return Ok(StopReason::GdbInterrupt);
-            }
-        }
-    }
-
+impl SingleThreadBase for GdbStub {
     fn read_registers(
         &mut self,
         regs: &mut <Self::Arch as Arch>::Registers,
@@ -314,10 +285,74 @@ impl SingleThreadOps for GdbStub {
             }
         }
     }
+
+    #[inline(always)]
+    fn support_resume(&mut self) -> Option<SingleThreadResumeOps<'_, Self>> {
+        Some(self)
+    }
+}
+
+impl SingleThreadResume for GdbStub {
+    fn resume(&mut self, signal: Option<Signal>) -> Result<(), Self::Error> {
+        info!("resume");
+        // TODO: Add signal support
+        if signal.is_some() {
+            return Err("no support for continuing with signal");
+        }
+        match self.vm_request(GdbRequestPayload::SetSingleStep(false)) {
+            Ok(_) => {
+                self.single_step = false;
+            }
+            Err(e) => {
+                error!("Failed to request SetSingleStep: {:?}", e);
+                return Err("Failed to request SetSingleStep");
+            }
+        }
+        match self.vm_request(GdbRequestPayload::Resume) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                error!("Failed to resume the target: {:?}", e);
+                return Err("Failed to resume the target");
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn support_single_step(&mut self) -> Option<SingleThreadSingleStepOps<'_, Self>> {
+        Some(self)
+    }
+}
+
+impl SingleThreadSingleStep for GdbStub {
+    fn step(&mut self, signal: Option<Signal>) -> Result<(), Self::Error> {
+        info!("step");
+        // TODO: Add signal support
+        if signal.is_some() {
+            return Err("no support for stepping with signal");
+        }
+
+        match self.vm_request(GdbRequestPayload::SetSingleStep(true)) {
+            Ok(_) => {
+                self.single_step = true;
+            }
+            Err(e) => {
+                error!("Failed to request SetSingleStep: {:?}", e);
+                return Err("Failed to request SetSingleStep");
+            }
+        }
+        match self.vm_request(GdbRequestPayload::Resume) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                error!("Failed to resume the target: {:?}", e);
+                return Err("Failed to resume the target");
+            }
+        }
+    }
 }
 
 impl Breakpoints for GdbStub {
-    fn hw_breakpoint(&mut self) -> Option<HwBreakpointOps<Self>> {
+    #[inline(always)]
+    fn support_hw_breakpoint(&mut self) -> Option<HwBreakpointOps<Self>> {
         Some(self)
     }
 }
@@ -360,5 +395,67 @@ impl HwBreakpoint for GdbStub {
                 Err(TargetError::NonFatal)
             }
         }
+    }
+}
+
+enum GdbEventLoop {}
+
+impl run_blocking::BlockingEventLoop for GdbEventLoop {
+    type Target = GdbStub;
+    type Connection = Box<dyn ConnectionExt<Error = std::io::Error>>;
+    type StopReason = SingleThreadStopReason<ArchUsize>;
+
+    fn wait_for_stop_reason(
+        target: &mut Self::Target,
+        conn: &mut Self::Connection,
+    ) -> Result<
+        run_blocking::Event<Self::StopReason>,
+        run_blocking::WaitForStopReasonError<
+            <Self::Target as Target>::Error,
+            <Self::Connection as Connection>::Error,
+        >,
+    > {
+        // Polling
+        loop {
+            // This read is non-blocking.
+            match target.vm_event.read() {
+                Ok(v) => {
+                    if v == 256 {
+                        info!("Received VmExit::Debug");
+                        target.vm_request(GdbRequestPayload::Pause).map_err(|_| {
+                            run_blocking::WaitForStopReasonError::Target("Failed to pause VM")
+                        })?;
+                        let stop_reason = if target.single_step {
+                            SingleThreadStopReason::DoneStep
+                        } else {
+                            SingleThreadStopReason::HwBreak(())
+                        };
+                        return Ok(run_blocking::Event::TargetStopped(stop_reason));
+                    }
+                }
+                Err(e) => {
+                    if e.kind() != std::io::ErrorKind::WouldBlock {
+                        return Err(run_blocking::WaitForStopReasonError::Connection(e));
+                    }
+                }
+            }
+
+            if conn.peek().map(|b| b.is_some()).unwrap_or(true) {
+                let byte = conn
+                    .read()
+                    .map_err(run_blocking::WaitForStopReasonError::Connection)?;
+                return Ok(run_blocking::Event::IncomingData(byte));
+            }
+        }
+    }
+
+    fn on_interrupt(
+        target: &mut Self::Target,
+    ) -> Result<Option<Self::StopReason>, <Self::Target as Target>::Error> {
+        target.vm_request(GdbRequestPayload::Pause).map_err(|e| {
+            error!("Failed to pause the target: {:?}", e);
+            "Failed to pause the target"
+        })?;
+        Ok(Some(SingleThreadStopReason::Signal(Signal::SIGINT)))
     }
 }

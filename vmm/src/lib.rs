@@ -323,7 +323,7 @@ pub fn start_vmm_thread(
 
     #[cfg(feature = "gdb")]
     if let Some(debug_path) = debug_path {
-        let target = gdb::GdbStub::new(gdb_sender, gdb_debug_event);
+        let target = gdb::GdbStub::new(gdb_sender, gdb_debug_event, gdb_vm_debug_event);
         thread::Builder::new()
             .name("gdb".to_owned())
             .spawn(move || gdb::gdb_thread(target, &debug_path))
