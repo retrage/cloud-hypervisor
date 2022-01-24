@@ -254,6 +254,7 @@ pub fn start_vmm_thread(
     api_receiver: Receiver<ApiRequest>,
     debug_path: Option<String>,
     debug_event: EventFd,
+    vm_debug_event: EventFd,
     seccomp_action: &SeccompAction,
     hypervisor: Arc<dyn hypervisor::Hypervisor>,
 ) -> Result<thread::JoinHandle<Result<()>>> {
@@ -261,6 +262,8 @@ pub fn start_vmm_thread(
     let (gdb_sender, gdb_receiver) = std::sync::mpsc::channel();
     #[cfg(feature = "gdb")]
     let gdb_debug_event = debug_event.try_clone().map_err(Error::EventFdClone)?;
+    #[cfg(feature = "gdb")]
+    let gdb_vm_debug_event = vm_debug_event.try_clone().map_err(Error::EventFdClone)?;
 
     let http_api_event = api_event.try_clone().map_err(Error::EventFdClone)?;
 
@@ -284,6 +287,7 @@ pub fn start_vmm_thread(
                     vmm_version.to_string(),
                     api_event,
                     debug_event,
+                    vm_debug_event,
                     vmm_seccomp_action,
                     hypervisor,
                     exit_evt,
@@ -337,12 +341,14 @@ struct VmMigrationConfig {
     memory_manager_data: MemoryManagerSnapshotData,
 }
 
+#[allow(dead_code)] // TODO: Remove this.
 pub struct Vmm {
     epoll: EpollContext,
     exit_evt: EventFd,
     reset_evt: EventFd,
     api_evt: EventFd,
     debug_evt: EventFd,
+    vm_debug_evt: EventFd,
     version: String,
     vm: Option<Vm>,
     vm_config: Option<Arc<Mutex<VmConfig>>>,
@@ -356,6 +362,7 @@ impl Vmm {
         vmm_version: String,
         api_evt: EventFd,
         debug_evt: EventFd,
+        vm_debug_evt: EventFd,
         seccomp_action: SeccompAction,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         exit_evt: EventFd,
@@ -390,6 +397,7 @@ impl Vmm {
             reset_evt,
             api_evt,
             debug_evt,
+            vm_debug_evt,
             version: vmm_version,
             vm: None,
             vm_config: None,
@@ -420,7 +428,10 @@ impl Vmm {
         if self.vm.is_none() {
             let exit_evt = self.exit_evt.try_clone().map_err(VmError::EventFdClone)?;
             let reset_evt = self.reset_evt.try_clone().map_err(VmError::EventFdClone)?;
-            let debug_evt = self.debug_evt.try_clone().map_err(VmError::EventFdClone)?;
+            let vm_debug_evt = self
+                .vm_debug_evt
+                .try_clone()
+                .map_err(VmError::EventFdClone)?;
             let activate_evt = self
                 .activate_evt
                 .try_clone()
@@ -431,7 +442,7 @@ impl Vmm {
                     Arc::clone(vm_config),
                     exit_evt,
                     reset_evt,
-                    debug_evt,
+                    vm_debug_evt,
                     &self.seccomp_action,
                     self.hypervisor.clone(),
                     activate_evt,
@@ -504,7 +515,10 @@ impl Vmm {
 
         let exit_evt = self.exit_evt.try_clone().map_err(VmError::EventFdClone)?;
         let reset_evt = self.reset_evt.try_clone().map_err(VmError::EventFdClone)?;
-        let debug_evt = self.debug_evt.try_clone().map_err(VmError::EventFdClone)?;
+        let debug_evt = self
+            .vm_debug_evt
+            .try_clone()
+            .map_err(VmError::EventFdClone)?;
         let activate_evt = self
             .activate_evt
             .try_clone()
@@ -563,7 +577,10 @@ impl Vmm {
 
             let exit_evt = self.exit_evt.try_clone().map_err(VmError::EventFdClone)?;
             let reset_evt = self.reset_evt.try_clone().map_err(VmError::EventFdClone)?;
-            let debug_evt = self.debug_evt.try_clone().map_err(VmError::EventFdClone)?;
+            let debug_evt = self
+                .vm_debug_evt
+                .try_clone()
+                .map_err(VmError::EventFdClone)?;
             let activate_evt = self
                 .activate_evt
                 .try_clone()
@@ -839,7 +856,7 @@ impl Vmm {
         let reset_evt = self.reset_evt.try_clone().map_err(|e| {
             MigratableError::MigrateReceive(anyhow!("Error cloning reset EventFd: {}", e))
         })?;
-        let debug_evt = self.debug_evt.try_clone().map_err(|e| {
+        let debug_evt = self.vm_debug_evt.try_clone().map_err(|e| {
             MigratableError::MigrateReceive(anyhow!("Error cloning debug EventFd: {}", e))
         })?;
         let activate_evt = self.activate_evt.try_clone().map_err(|e| {

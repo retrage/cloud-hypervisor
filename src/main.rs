@@ -526,6 +526,7 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
     let hypervisor = hypervisor::new().map_err(Error::CreateHypervisor)?;
 
     let debug_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateDebugEventFd)?;
+    let vm_debug_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateDebugEventFd)?;
     let gdb_socket_path = if let Some(gdb_config) = cmd_arguments.value_of("gdb") {
         let mut parser = OptionParser::new();
         parser.add("path");
@@ -546,6 +547,7 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
         api_request_receiver,
         gdb_socket_path.map(String::from),
         debug_evt.try_clone().unwrap(),
+        vm_debug_evt.try_clone().unwrap(),
         &seccomp_action,
         hypervisor,
     )
