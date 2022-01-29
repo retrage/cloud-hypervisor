@@ -2410,7 +2410,7 @@ impl Vm {
                     .lock()
                     .unwrap()
                     .set_guest_debug(&[], *single_step)
-                    .map_err(Error::CpuManager)?;
+                    .map_err(Error::Debug)?;
                 Ok(GdbResponsePayload::VmDebugStatus(
                     VmDebugStatus::CommandComplete,
                 ))
@@ -2420,7 +2420,7 @@ impl Vm {
                     .lock()
                     .unwrap()
                     .set_guest_debug(addrs, false)
-                    .map_err(Error::CpuManager)?;
+                    .map_err(Error::Debug)?;
                 Ok(GdbResponsePayload::VmDebugStatus(
                     VmDebugStatus::CommandComplete,
                 ))

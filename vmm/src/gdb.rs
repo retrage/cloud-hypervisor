@@ -87,6 +87,8 @@ pub enum GdbResponseEventKind {
 
 #[derive(Debug)]
 pub enum DebuggableError {
+    SetDebug(crate::cpu::Error),
+
     Pause(vm_migration::MigratableError),
 
     Resume(vm_migration::MigratableError),
@@ -103,6 +105,11 @@ pub enum DebuggableError {
 }
 
 pub trait Debuggable: vm_migration::Pausable {
+    fn set_guest_debug(
+        &self,
+        addrs: &[GuestAddress],
+        enable_singlestep: bool,
+    ) -> Result<(), DebuggableError>;
     fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError>;
     fn debug_resume(&mut self) -> std::result::Result<(), DebuggableError>;
     fn read_regs(&self) -> std::result::Result<CoreRegs, DebuggableError>;

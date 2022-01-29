@@ -1335,16 +1335,6 @@ impl CpuManager {
         pptt
     }
 
-    #[cfg(all(target_arch = "x86_64", feature = "kvm", feature = "gdb"))]
-    pub fn set_guest_debug(&self, addrs: &[GuestAddress], enable_singlestep: bool) -> Result<()> {
-        self.vcpus[0]
-            .lock()
-            .unwrap()
-            .vcpu
-            .set_guest_debug(addrs, enable_singlestep)
-            .map_err(Error::CpuDebug)
-    }
-
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     fn read_gregs(&self) -> Result<StandardRegisters> {
         self.vcpus[0]
@@ -1756,6 +1746,21 @@ impl Migratable for CpuManager {}
 
 #[cfg(feature = "gdb")]
 impl Debuggable for CpuManager {
+    #[cfg(feature = "kvm")]
+    fn set_guest_debug(
+        &self,
+        addrs: &[GuestAddress],
+        enable_singlestep: bool,
+    ) -> std::result::Result<(), DebuggableError> {
+        self.vcpus[0]
+            .lock()
+            .unwrap()
+            .vcpu
+            .set_guest_debug(addrs, enable_singlestep)
+            .map_err(Error::CpuDebug)
+            .map_err(DebuggableError::SetDebug)
+    }
+
     fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError> {
         if !self.vcpus_pause_signalled() {
             Pausable::pause(self).map_err(DebuggableError::Pause)?;
@@ -1777,6 +1782,7 @@ impl Debuggable for CpuManager {
         Ok(())
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn read_regs(&self) -> std::result::Result<X86_64CoreRegs, DebuggableError> {
         // General registers: RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, r8-r15
         let gregs = self.read_gregs().map_err(DebuggableError::ReadRegs)?;
@@ -1812,6 +1818,7 @@ impl Debuggable for CpuManager {
         })
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn write_regs(&self, regs: &X86_64CoreRegs) -> std::result::Result<(), DebuggableError> {
         let orig_gregs = self.read_gregs().map_err(DebuggableError::ReadRegs)?;
         let gregs = StandardRegisters {
@@ -1866,6 +1873,7 @@ impl Debuggable for CpuManager {
         Ok(())
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn read_mem(
         &self,
         vaddr: GuestAddress,
@@ -1892,6 +1900,7 @@ impl Debuggable for CpuManager {
         Ok(buf)
     }
 
+    #[cfg(target_arch = "x86_64")]
     fn write_mem(
         &self,
         vaddr: &GuestAddress,
