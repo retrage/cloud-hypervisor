@@ -88,6 +88,8 @@ use vmm_sys_util::signal::unblock_signal;
 use vmm_sys_util::sock_ctrl_msg::ScmSocket;
 use vmm_sys_util::terminal::Terminal;
 
+#[cfg(feature = "gdb")]
+use crate::gdb::{GdbRequestPayload, GdbResponsePayload};
 #[cfg(target_arch = "aarch64")]
 use arch::aarch64::gic::gicv3_its::kvm::{KvmGicV3Its, GIC_V3_ITS_SNAPSHOT_ID};
 #[cfg(target_arch = "aarch64")]
@@ -2395,28 +2397,31 @@ impl Vm {
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
-    pub fn debug_request(
-        &mut self,
-        gdb_request: &crate::gdb::GdbRequestPayload,
-    ) -> Result<crate::gdb::GdbResponsePayload> {
+    pub fn debug_request(&mut self, gdb_request: &GdbRequestPayload) -> Result<GdbResponsePayload> {
+        use crate::gdb::VmDebugStatus;
+
         match gdb_request {
-            crate::gdb::GdbRequestPayload::SetSingleStep(single_step) => {
+            GdbRequestPayload::SetSingleStep(single_step) => {
                 self.cpu_manager
                     .lock()
                     .unwrap()
                     .set_guest_debug(&[], *single_step)
                     .map_err(Error::CpuManager)?;
-                Ok(crate::gdb::GdbResponsePayload::Empty)
+                Ok(GdbResponsePayload::VmDebugStatus(
+                    VmDebugStatus::CommandComplete,
+                ))
             }
-            crate::gdb::GdbRequestPayload::SetHwBreakPoint(addrs) => {
+            GdbRequestPayload::SetHwBreakPoint(addrs) => {
                 self.cpu_manager
                     .lock()
                     .unwrap()
                     .set_guest_debug(addrs, false)
                     .map_err(Error::CpuManager)?;
-                Ok(crate::gdb::GdbResponsePayload::Empty)
+                Ok(GdbResponsePayload::VmDebugStatus(
+                    VmDebugStatus::CommandComplete,
+                ))
             }
-            crate::gdb::GdbRequestPayload::Pause => {
+            GdbRequestPayload::Pause => {
                 if !self.cpu_manager.lock().unwrap().vcpus_pause_signalled() {
                     self.cpu_manager
                         .lock()
@@ -2426,9 +2431,11 @@ impl Vm {
                 }
                 let mut state = self.state.try_write().map_err(|_| Error::PoisonedState)?;
                 *state = VmState::BreakPoint;
-                Ok(crate::gdb::GdbResponsePayload::Empty)
+                Ok(GdbResponsePayload::VmDebugStatus(
+                    VmDebugStatus::CommandComplete,
+                ))
             }
-            crate::gdb::GdbRequestPayload::Resume => {
+            GdbRequestPayload::Resume => {
                 let vm_state = self.get_state().unwrap();
                 if vm_state == VmState::Created {
                     self.cpu_manager
@@ -2445,9 +2452,11 @@ impl Vm {
                 }
                 let mut state = self.state.try_write().map_err(|_| Error::PoisonedState)?;
                 *state = VmState::Running;
-                Ok(crate::gdb::GdbResponsePayload::Empty)
+                Ok(GdbResponsePayload::VmDebugStatus(
+                    VmDebugStatus::CommandComplete,
+                ))
             }
-            crate::gdb::GdbRequestPayload::ReadRegs => {
+            GdbRequestPayload::ReadRegs => {
                 let regs = self
                     .cpu_manager
                     .lock()
@@ -2456,15 +2465,17 @@ impl Vm {
                     .map_err(Error::CpuManager)?;
                 Ok(crate::gdb::GdbResponsePayload::RegValues(Box::new(regs)))
             }
-            crate::gdb::GdbRequestPayload::WriteRegs(regs) => {
+            GdbRequestPayload::WriteRegs(regs) => {
                 self.cpu_manager
                     .lock()
                     .unwrap()
                     .gdb_write_registers(regs)
                     .map_err(Error::CpuManager)?;
-                Ok(crate::gdb::GdbResponsePayload::Empty)
+                Ok(GdbResponsePayload::VmDebugStatus(
+                    VmDebugStatus::CommandComplete,
+                ))
             }
-            crate::gdb::GdbRequestPayload::ReadMem(vaddr, len) => {
+            GdbRequestPayload::ReadMem(vaddr, len) => {
                 let mem = self
                     .cpu_manager
                     .lock()
@@ -2473,13 +2484,15 @@ impl Vm {
                     .map_err(Error::CpuManager)?;
                 Ok(crate::gdb::GdbResponsePayload::MemoryRegion(mem))
             }
-            crate::gdb::GdbRequestPayload::WriteMem(vaddr, data) => {
+            GdbRequestPayload::WriteMem(vaddr, data) => {
                 self.cpu_manager
                     .lock()
                     .unwrap()
                     .gdb_write_memory(vaddr, data)
                     .map_err(Error::CpuManager)?;
-                Ok(crate::gdb::GdbResponsePayload::Empty)
+                Ok(GdbResponsePayload::VmDebugStatus(
+                    VmDebugStatus::CommandComplete,
+                ))
             }
         }
     }
