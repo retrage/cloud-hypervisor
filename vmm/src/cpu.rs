@@ -887,7 +887,7 @@ impl CpuManager {
                                     VmExit::Debug => {
                                         info!("VmExit::Debug");
                                         vcpu_pause_signalled.store(true, Ordering::SeqCst);
-                                        vm_debug_evt.write(256).unwrap(); // TODO: Fix event number
+                                        vm_debug_evt.write(vcpu_id as u64).unwrap();
                                     }
                                     #[cfg(target_arch = "x86_64")]
                                     VmExit::IoapicEoi(vector) => {
@@ -1752,13 +1752,16 @@ impl Debuggable for CpuManager {
         addrs: &[GuestAddress],
         enable_singlestep: bool,
     ) -> std::result::Result<(), DebuggableError> {
-        self.vcpus[0]
-            .lock()
-            .unwrap()
-            .vcpu
-            .set_guest_debug(addrs, enable_singlestep)
-            .map_err(Error::CpuDebug)
-            .map_err(DebuggableError::SetDebug)
+        for cpu_id in 0..self.active_vpus() {
+            self.vcpus[cpu_id]
+                .lock()
+                .unwrap()
+                .vcpu
+                .set_guest_debug(addrs, enable_singlestep)
+                .map_err(Error::CpuDebug)
+                .map_err(DebuggableError::SetDebug)?;
+        }
+        Ok(())
     }
 
     fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError> {
@@ -1783,12 +1786,10 @@ impl Debuggable for CpuManager {
     }
 
     #[cfg(target_arch = "x86_64")]
-    fn read_regs(&self) -> std::result::Result<X86_64CoreRegs, DebuggableError> {
-        const DEBUG_CPU: u8 = 0; // Supports 1 vCPU at this moment
-        assert!(self.boot_vcpus() > DEBUG_CPU);
+    fn read_regs(&self, cpu_id: usize) -> std::result::Result<X86_64CoreRegs, DebuggableError> {
         // General registers: RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, r8-r15
         let gregs = self
-            .read_gregs(DEBUG_CPU)
+            .read_gregs(cpu_id as u8)
             .map_err(DebuggableError::ReadRegs)?;
         let regs = [
             gregs.rax, gregs.rbx, gregs.rcx, gregs.rdx, gregs.rsi, gregs.rdi, gregs.rbp, gregs.rsp,
@@ -1802,7 +1803,7 @@ impl Debuggable for CpuManager {
 
         // Segment registers: CS, SS, DS, ES, FS, GS
         let sregs = self
-            .read_sregs(DEBUG_CPU)
+            .read_sregs(cpu_id as u8)
             .map_err(DebuggableError::ReadRegs)?;
         let segments = X86SegmentRegs {
             cs: sregs.cs.selector as u32,
@@ -1825,11 +1826,13 @@ impl Debuggable for CpuManager {
     }
 
     #[cfg(target_arch = "x86_64")]
-    fn write_regs(&self, regs: &X86_64CoreRegs) -> std::result::Result<(), DebuggableError> {
-        const DEBUG_CPU: u8 = 0; // Supports 1 vCPU at this moment
-        assert!(self.boot_vcpus() > DEBUG_CPU);
+    fn write_regs(
+        &self,
+        cpu_id: usize,
+        regs: &X86_64CoreRegs,
+    ) -> std::result::Result<(), DebuggableError> {
         let orig_gregs = self
-            .read_gregs(DEBUG_CPU)
+            .read_gregs(cpu_id as u8)
             .map_err(DebuggableError::ReadRegs)?;
         let gregs = StandardRegisters {
             rax: regs.regs[0],
@@ -1852,7 +1855,7 @@ impl Debuggable for CpuManager {
             // Update the lower 32-bit of rflags.
             rflags: (orig_gregs.rflags & !(u32::MAX as u64)) | (regs.eflags as u64),
         };
-        self.vcpus[usize::from(DEBUG_CPU)]
+        self.vcpus[cpu_id]
             .lock()
             .unwrap()
             .vcpu
@@ -1863,7 +1866,7 @@ impl Debuggable for CpuManager {
         // Segment registers: CS, SS, DS, ES, FS, GS
         // Since GDB care only selectors, we call get_sregs() first.
         let mut sregs = self
-            .read_sregs(DEBUG_CPU)
+            .read_sregs(cpu_id as u8)
             .map_err(DebuggableError::ReadRegs)?;
         sregs.cs.selector = regs.segments.cs as u16;
         sregs.ss.selector = regs.segments.ss as u16;
@@ -1872,7 +1875,7 @@ impl Debuggable for CpuManager {
         sregs.fs.selector = regs.segments.fs as u16;
         sregs.gs.selector = regs.segments.gs as u16;
 
-        self.vcpus[usize::from(DEBUG_CPU)]
+        self.vcpus[cpu_id]
             .lock()
             .unwrap()
             .vcpu
@@ -1888,18 +1891,16 @@ impl Debuggable for CpuManager {
     #[cfg(target_arch = "x86_64")]
     fn read_mem(
         &self,
+        cpu_id: usize,
         vaddr: GuestAddress,
         len: usize,
     ) -> std::result::Result<Vec<u8>, DebuggableError> {
-        const DEBUG_CPU: u8 = 0; // Supports 1 vCPU at this moment
-        assert!(self.boot_vcpus() > DEBUG_CPU);
-
         let mut buf = vec![0; len];
         let mut total_read = 0_u64;
 
         while total_read < len as u64 {
             let paddr = self
-                .translate_gva(DEBUG_CPU, vaddr.0 + total_read)
+                .translate_gva(cpu_id as u8, vaddr.0 + total_read)
                 .map_err(DebuggableError::TranslateGVA)?;
             let psize = 0x1000;
             let read_len = std::cmp::min(len as u64 - total_read, psize - (paddr & (psize - 1)));
@@ -1918,17 +1919,15 @@ impl Debuggable for CpuManager {
     #[cfg(target_arch = "x86_64")]
     fn write_mem(
         &self,
+        cpu_id: usize,
         vaddr: &GuestAddress,
         data: &[u8],
     ) -> std::result::Result<(), DebuggableError> {
-        const DEBUG_CPU: u8 = 0; // Supports 1 vCPU at this moment
-        assert!(self.boot_vcpus() > DEBUG_CPU);
-
         let mut total_written = 0_u64;
 
         while total_written < data.len() as u64 {
             let paddr = self
-                .translate_gva(DEBUG_CPU, vaddr.0 + total_written)
+                .translate_gva(cpu_id as u8, vaddr.0 + total_written)
                 .map_err(DebuggableError::TranslateGVA)?;
             let psize = 0x1000;
             let write_len = std::cmp::min(
@@ -1945,6 +1944,10 @@ impl Debuggable for CpuManager {
             total_written += write_len;
         }
         Ok(())
+    }
+
+    fn active_vpus(&self) -> usize {
+        self.present_vcpus() as usize
     }
 }
 

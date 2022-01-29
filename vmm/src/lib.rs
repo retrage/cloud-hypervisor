@@ -1634,7 +1634,7 @@ impl Vmm {
                         let gdb_request = gdb_receiver.recv().map_err(Error::GdbRequestRecv)?;
 
                         let response = if let Some(ref mut vm) = self.vm {
-                            vm.debug_request(&gdb_request.payload)
+                            vm.debug_request(&gdb_request.payload, gdb_request.cpu_id)
                         } else {
                             Err(VmError::VmNotRunning)
                         }

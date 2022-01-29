@@ -2403,7 +2403,11 @@ impl Vm {
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
-    pub fn debug_request(&mut self, gdb_request: &GdbRequestPayload) -> Result<GdbResponsePayload> {
+    pub fn debug_request(
+        &mut self,
+        gdb_request: &GdbRequestPayload,
+        cpu_id: usize,
+    ) -> Result<GdbResponsePayload> {
         use crate::gdb::VmDebugStatus;
 
         match gdb_request {
@@ -2421,18 +2425,22 @@ impl Vm {
                 self.debug_resume().map_err(Error::Debug)?;
             }
             GdbRequestPayload::ReadRegs => {
-                let regs = self.read_regs().map_err(Error::Debug)?;
+                let regs = self.read_regs(cpu_id).map_err(Error::Debug)?;
                 return Ok(crate::gdb::GdbResponsePayload::RegValues(Box::new(regs)));
             }
             GdbRequestPayload::WriteRegs(regs) => {
-                self.write_regs(regs).map_err(Error::Debug)?;
+                self.write_regs(cpu_id, regs).map_err(Error::Debug)?;
             }
             GdbRequestPayload::ReadMem(vaddr, len) => {
-                let mem = self.read_mem(*vaddr, *len).map_err(Error::Debug)?;
+                let mem = self.read_mem(cpu_id, *vaddr, *len).map_err(Error::Debug)?;
                 return Ok(crate::gdb::GdbResponsePayload::MemoryRegion(mem));
             }
             GdbRequestPayload::WriteMem(vaddr, data) => {
-                self.write_mem(vaddr, data).map_err(Error::Debug)?;
+                self.write_mem(cpu_id, vaddr, data).map_err(Error::Debug)?;
+            }
+            GdbRequestPayload::ActiveVcpus => {
+                let active_vcpus = self.active_vpus();
+                return Ok(crate::gdb::GdbResponsePayload::ActiveVcpus(active_vcpus));
             }
         }
         Ok(GdbResponsePayload::VmDebugStatus(
@@ -2782,28 +2790,48 @@ impl Debuggable for Vm {
         Ok(())
     }
 
-    fn read_regs(&self) -> std::result::Result<X86_64CoreRegs, DebuggableError> {
-        self.cpu_manager.lock().unwrap().read_regs()
+    fn read_regs(&self, cpu_id: usize) -> std::result::Result<X86_64CoreRegs, DebuggableError> {
+        self.cpu_manager.lock().unwrap().read_regs(cpu_id)
     }
 
-    fn write_regs(&self, regs: &X86_64CoreRegs) -> std::result::Result<(), DebuggableError> {
-        self.cpu_manager.lock().unwrap().write_regs(regs)
+    fn write_regs(
+        &self,
+        cpu_id: usize,
+        regs: &X86_64CoreRegs,
+    ) -> std::result::Result<(), DebuggableError> {
+        self.cpu_manager.lock().unwrap().write_regs(cpu_id, regs)
     }
 
     fn read_mem(
         &self,
+        cpu_id: usize,
         vaddr: GuestAddress,
         len: usize,
     ) -> std::result::Result<Vec<u8>, DebuggableError> {
-        self.cpu_manager.lock().unwrap().read_mem(vaddr, len)
+        self.cpu_manager
+            .lock()
+            .unwrap()
+            .read_mem(cpu_id, vaddr, len)
     }
 
     fn write_mem(
         &self,
+        cpu_id: usize,
         vaddr: &GuestAddress,
         data: &[u8],
     ) -> std::result::Result<(), DebuggableError> {
-        self.cpu_manager.lock().unwrap().write_mem(vaddr, data)
+        self.cpu_manager
+            .lock()
+            .unwrap()
+            .write_mem(cpu_id, vaddr, data)
+    }
+
+    fn active_vpus(&self) -> usize {
+        if self.get_state().unwrap() == VmState::Created {
+            self.cpu_manager.lock().unwrap().boot_vcpus() as usize
+        } else {
+            self.cpu_manager.lock().unwrap().active_vpus()
+        }
     }
 }
 
