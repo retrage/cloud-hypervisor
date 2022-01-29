@@ -299,13 +299,15 @@ impl SingleThreadResume for GdbStub {
         if signal.is_some() {
             return Err("no support for continuing with signal");
         }
-        match self.vm_request(GdbRequestPayload::SetSingleStep(false)) {
-            Ok(_) => {
-                self.single_step = false;
-            }
-            Err(e) => {
-                error!("Failed to request SetSingleStep: {:?}", e);
-                return Err("Failed to request SetSingleStep");
+        if self.single_step {
+            match self.vm_request(GdbRequestPayload::SetSingleStep(false)) {
+                Ok(_) => {
+                    self.single_step = false;
+                }
+                Err(e) => {
+                    error!("Failed to request SetSingleStep: {:?}", e);
+                    return Err("Failed to request SetSingleStep");
+                }
             }
         }
         match self.vm_request(GdbRequestPayload::Resume) {
@@ -331,13 +333,15 @@ impl SingleThreadSingleStep for GdbStub {
             return Err("no support for stepping with signal");
         }
 
-        match self.vm_request(GdbRequestPayload::SetSingleStep(true)) {
-            Ok(_) => {
-                self.single_step = true;
-            }
-            Err(e) => {
-                error!("Failed to request SetSingleStep: {:?}", e);
-                return Err("Failed to request SetSingleStep");
+        if !self.single_step {
+            match self.vm_request(GdbRequestPayload::SetSingleStep(true)) {
+                Ok(_) => {
+                    self.single_step = true;
+                }
+                Err(e) => {
+                    error!("Failed to request SetSingleStep: {:?}", e);
+                    return Err("Failed to request SetSingleStep");
+                }
             }
         }
         match self.vm_request(GdbRequestPayload::Resume) {
