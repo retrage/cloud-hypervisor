@@ -102,6 +102,8 @@ pub enum DebuggableError {
     WriteMem(crate::cpu::Error),
 
     TranslateGVA(crate::cpu::Error),
+
+    PoisonedState,
 }
 
 pub trait Debuggable: vm_migration::Pausable {

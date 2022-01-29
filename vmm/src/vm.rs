@@ -43,6 +43,8 @@ use arch::PciSpaceInfo;
 #[cfg(any(target_arch = "aarch64", feature = "acpi"))]
 use arch::{NumaNode, NumaNodes};
 use devices::AcpiNotificationFlags;
+#[cfg(all(target_arch = "x86_64", feature = "gdb"))]
+use gdbstub_arch::x86::reg::X86_64CoreRegs;
 use hypervisor::vm::{HypervisorVmError, VmmOps};
 use linux_loader::cmdline::Cmdline;
 #[cfg(target_arch = "x86_64")]
@@ -2406,88 +2408,36 @@ impl Vm {
 
         match gdb_request {
             GdbRequestPayload::SetSingleStep(single_step) => {
-                self.cpu_manager
-                    .lock()
-                    .unwrap()
-                    .set_guest_debug(&[], *single_step)
+                self.set_guest_debug(&[], *single_step)
                     .map_err(Error::Debug)?;
-                Ok(GdbResponsePayload::VmDebugStatus(
-                    VmDebugStatus::CommandComplete,
-                ))
             }
             GdbRequestPayload::SetHwBreakPoint(addrs) => {
-                self.cpu_manager
-                    .lock()
-                    .unwrap()
-                    .set_guest_debug(addrs, false)
-                    .map_err(Error::Debug)?;
-                Ok(GdbResponsePayload::VmDebugStatus(
-                    VmDebugStatus::CommandComplete,
-                ))
+                self.set_guest_debug(addrs, false).map_err(Error::Debug)?;
             }
             GdbRequestPayload::Pause => {
-                self.cpu_manager
-                    .lock()
-                    .unwrap()
-                    .debug_pause()
-                    .map_err(Error::Debug)?;
-                let mut state = self.state.try_write().map_err(|_| Error::PoisonedState)?;
-                *state = VmState::BreakPoint;
-                Ok(GdbResponsePayload::VmDebugStatus(
-                    VmDebugStatus::CommandComplete,
-                ))
+                self.debug_pause().map_err(Error::Debug)?;
             }
             GdbRequestPayload::Resume => {
-                self.cpu_manager
-                    .lock()
-                    .unwrap()
-                    .debug_resume()
-                    .map_err(Error::Debug)?;
-                let mut state = self.state.try_write().map_err(|_| Error::PoisonedState)?;
-                *state = VmState::Running;
-                Ok(GdbResponsePayload::VmDebugStatus(
-                    VmDebugStatus::CommandComplete,
-                ))
+                self.debug_resume().map_err(Error::Debug)?;
             }
             GdbRequestPayload::ReadRegs => {
-                let regs = self
-                    .cpu_manager
-                    .lock()
-                    .unwrap()
-                    .read_regs()
-                    .map_err(Error::Debug)?;
-                Ok(crate::gdb::GdbResponsePayload::RegValues(Box::new(regs)))
+                let regs = self.read_regs().map_err(Error::Debug)?;
+                return Ok(crate::gdb::GdbResponsePayload::RegValues(Box::new(regs)));
             }
             GdbRequestPayload::WriteRegs(regs) => {
-                self.cpu_manager
-                    .lock()
-                    .unwrap()
-                    .write_regs(regs)
-                    .map_err(Error::Debug)?;
-                Ok(GdbResponsePayload::VmDebugStatus(
-                    VmDebugStatus::CommandComplete,
-                ))
+                self.write_regs(regs).map_err(Error::Debug)?;
             }
             GdbRequestPayload::ReadMem(vaddr, len) => {
-                let mem = self
-                    .cpu_manager
-                    .lock()
-                    .unwrap()
-                    .read_mem(*vaddr, *len)
-                    .map_err(Error::Debug)?;
-                Ok(crate::gdb::GdbResponsePayload::MemoryRegion(mem))
+                let mem = self.read_mem(*vaddr, *len).map_err(Error::Debug)?;
+                return Ok(crate::gdb::GdbResponsePayload::MemoryRegion(mem));
             }
             GdbRequestPayload::WriteMem(vaddr, data) => {
-                self.cpu_manager
-                    .lock()
-                    .unwrap()
-                    .write_mem(vaddr, data)
-                    .map_err(Error::Debug)?;
-                Ok(GdbResponsePayload::VmDebugStatus(
-                    VmDebugStatus::CommandComplete,
-                ))
+                self.write_mem(vaddr, data).map_err(Error::Debug)?;
             }
         }
+        Ok(GdbResponsePayload::VmDebugStatus(
+            VmDebugStatus::CommandComplete,
+        ))
     }
 }
 
@@ -2796,6 +2746,64 @@ impl Migratable for Vm {
     fn complete_migration(&mut self) -> std::result::Result<(), MigratableError> {
         self.memory_manager.lock().unwrap().complete_migration()?;
         self.device_manager.lock().unwrap().complete_migration()
+    }
+}
+
+#[cfg(feature = "gdb")]
+impl Debuggable for Vm {
+    fn set_guest_debug(
+        &self,
+        addrs: &[GuestAddress],
+        enable_singlestep: bool,
+    ) -> std::result::Result<(), DebuggableError> {
+        self.cpu_manager
+            .lock()
+            .unwrap()
+            .set_guest_debug(addrs, enable_singlestep)
+    }
+
+    fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError> {
+        self.cpu_manager.lock().unwrap().debug_pause()?;
+        let mut state = self
+            .state
+            .try_write()
+            .map_err(|_| DebuggableError::PoisonedState)?;
+        *state = VmState::BreakPoint;
+        Ok(())
+    }
+
+    fn debug_resume(&mut self) -> std::result::Result<(), DebuggableError> {
+        self.cpu_manager.lock().unwrap().debug_resume()?;
+        let mut state = self
+            .state
+            .try_write()
+            .map_err(|_| DebuggableError::PoisonedState)?;
+        *state = VmState::Running;
+        Ok(())
+    }
+
+    fn read_regs(&self) -> std::result::Result<X86_64CoreRegs, DebuggableError> {
+        self.cpu_manager.lock().unwrap().read_regs()
+    }
+
+    fn write_regs(&self, regs: &X86_64CoreRegs) -> std::result::Result<(), DebuggableError> {
+        self.cpu_manager.lock().unwrap().write_regs(regs)
+    }
+
+    fn read_mem(
+        &self,
+        vaddr: GuestAddress,
+        len: usize,
+    ) -> std::result::Result<Vec<u8>, DebuggableError> {
+        self.cpu_manager.lock().unwrap().read_mem(vaddr, len)
+    }
+
+    fn write_mem(
+        &self,
+        vaddr: &GuestAddress,
+        data: &[u8],
+    ) -> std::result::Result<(), DebuggableError> {
+        self.cpu_manager.lock().unwrap().write_mem(vaddr, data)
     }
 }
 
