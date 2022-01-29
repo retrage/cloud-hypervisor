@@ -85,6 +85,22 @@ pub enum GdbResponseEventKind {
     SetHwBreakPoint,
 }
 
+#[derive(Debug)]
+pub enum DebuggableError {
+    Pause(vm_migration::MigratableError),
+
+    Resume(vm_migration::MigratableError),
+}
+
+pub trait Debuggable: vm_migration::Pausable {
+    fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError> {
+        Ok(())
+    }
+    fn debug_resume(&mut self) -> std::result::Result<(), DebuggableError> {
+        Ok(())
+    }
+}
+
 pub fn gdb_thread(mut gdbstub: GdbStub, path: &str) {
     let listener = match UnixListener::bind(path) {
         Ok(s) => s,

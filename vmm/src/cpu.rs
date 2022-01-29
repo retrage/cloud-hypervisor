@@ -13,6 +13,8 @@
 
 use crate::config::CpusConfig;
 use crate::device_manager::DeviceManager;
+#[cfg(feature = "gdb")]
+use crate::gdb::{Debuggable, DebuggableError};
 use crate::memory_manager::MemoryManager;
 use crate::seccomp_filters::{get_seccomp_filter, Thread};
 #[cfg(target_arch = "x86_64")]
@@ -1882,6 +1884,30 @@ impl Snapshottable for CpuManager {
 
 impl Transportable for CpuManager {}
 impl Migratable for CpuManager {}
+
+#[cfg(feature = "gdb")]
+impl Debuggable for CpuManager {
+    fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError> {
+        if !self.vcpus_pause_signalled() {
+            Pausable::pause(self).map_err(DebuggableError::Pause)?;
+        }
+        Ok(())
+    }
+
+    fn debug_resume(&mut self) -> std::result::Result<(), DebuggableError> {
+        if !self.vcpus_pause_signalled() {
+            self.start_boot_vcpus().map_err(|e| {
+                DebuggableError::Resume(MigratableError::Resume(anyhow!(
+                    "Could not start boot vCPUs: {:?}",
+                    e
+                )))
+            })?;
+        } else {
+            Pausable::resume(self).map_err(DebuggableError::Resume)?;
+        }
+        Ok(())
+    }
+}
 
 #[cfg(all(feature = "kvm", target_arch = "x86_64"))]
 #[cfg(test)]

@@ -20,6 +20,8 @@ use crate::config::{
 use crate::cpu;
 use crate::device_manager::{self, Console, DeviceManager, DeviceManagerError, PtyPair};
 use crate::device_tree::DeviceTree;
+#[cfg(feature = "gdb")]
+use crate::gdb::{Debuggable, DebuggableError, GdbRequestPayload, GdbResponsePayload};
 use crate::memory_manager::{
     Error as MemoryManagerError, MemoryManager, MemoryManagerSnapshotData,
 };
@@ -88,8 +90,6 @@ use vmm_sys_util::signal::unblock_signal;
 use vmm_sys_util::sock_ctrl_msg::ScmSocket;
 use vmm_sys_util::terminal::Terminal;
 
-#[cfg(feature = "gdb")]
-use crate::gdb::{GdbRequestPayload, GdbResponsePayload};
 #[cfg(target_arch = "aarch64")]
 use arch::aarch64::gic::gicv3_its::kvm::{KvmGicV3Its, GIC_V3_ITS_SNAPSHOT_ID};
 #[cfg(target_arch = "aarch64")]
@@ -284,6 +284,14 @@ pub enum Error {
     /// Error finalizing TDX setup
     #[cfg(feature = "tdx")]
     FinalizeTdx(hypervisor::HypervisorVmError),
+
+    /// Error pausing debug VM
+    #[cfg(feature = "gdb")]
+    DebugPause(DebuggableError),
+
+    /// Error resuming debug VM
+    #[cfg(feature = "gdb")]
+    DebugResume(DebuggableError),
 }
 pub type Result<T> = result::Result<T, Error>;
 
@@ -2422,13 +2430,11 @@ impl Vm {
                 ))
             }
             GdbRequestPayload::Pause => {
-                if !self.cpu_manager.lock().unwrap().vcpus_pause_signalled() {
-                    self.cpu_manager
-                        .lock()
-                        .unwrap()
-                        .pause()
-                        .map_err(Error::PauseCpus)?;
-                }
+                self.cpu_manager
+                    .lock()
+                    .unwrap()
+                    .debug_pause()
+                    .map_err(Error::DebugPause)?;
                 let mut state = self.state.try_write().map_err(|_| Error::PoisonedState)?;
                 *state = VmState::BreakPoint;
                 Ok(GdbResponsePayload::VmDebugStatus(
@@ -2436,20 +2442,11 @@ impl Vm {
                 ))
             }
             GdbRequestPayload::Resume => {
-                let vm_state = self.get_state().unwrap();
-                if vm_state == VmState::Created {
-                    self.cpu_manager
-                        .lock()
-                        .unwrap()
-                        .start_boot_vcpus()
-                        .map_err(Error::CpuManager)?;
-                } else if vm_state == VmState::BreakPoint {
-                    self.cpu_manager
-                        .lock()
-                        .unwrap()
-                        .resume()
-                        .map_err(Error::ResumeCpus)?;
-                }
+                self.cpu_manager
+                    .lock()
+                    .unwrap()
+                    .debug_resume()
+                    .map_err(Error::DebugResume)?;
                 let mut state = self.state.try_write().map_err(|_| Error::PoisonedState)?;
                 *state = VmState::Running;
                 Ok(GdbResponsePayload::VmDebugStatus(
