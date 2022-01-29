@@ -1366,137 +1366,6 @@ impl CpuManager {
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
-    pub fn gdb_read_registers(&self) -> Result<X86_64CoreRegs> {
-        // General registers: RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, r8-r15
-        let gregs = self.read_gregs()?;
-        let regs = [
-            gregs.rax, gregs.rbx, gregs.rcx, gregs.rdx, gregs.rsi, gregs.rdi, gregs.rbp, gregs.rsp,
-            gregs.r8, gregs.r9, gregs.r10, gregs.r11, gregs.r12, gregs.r13, gregs.r14, gregs.r15,
-        ];
-
-        // GDB exposes 32-bit eflags instead of 64-bit rflags.
-        // https://github.com/bminor/binutils-gdb/blob/master/gdb/features/i386/64bit-core.xml
-        let eflags = gregs.rflags as u32;
-        let rip = gregs.rip;
-
-        // Segment registers: CS, SS, DS, ES, FS, GS
-        let sregs = self.read_sregs()?;
-        let segments = X86SegmentRegs {
-            cs: sregs.cs.selector as u32,
-            ss: sregs.ss.selector as u32,
-            ds: sregs.ds.selector as u32,
-            es: sregs.es.selector as u32,
-            fs: sregs.fs.selector as u32,
-            gs: sregs.gs.selector as u32,
-        };
-
-        // TODO: Add other registers
-
-        Ok(X86_64CoreRegs {
-            regs,
-            eflags,
-            rip,
-            segments,
-            ..Default::default()
-        })
-    }
-
-    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
-    pub fn gdb_write_registers(&self, regs: &X86_64CoreRegs) -> Result<()> {
-        let orig_gregs = self.read_gregs()?;
-        let gregs = StandardRegisters {
-            rax: regs.regs[0],
-            rbx: regs.regs[1],
-            rcx: regs.regs[2],
-            rdx: regs.regs[3],
-            rsi: regs.regs[4],
-            rdi: regs.regs[5],
-            rbp: regs.regs[6],
-            rsp: regs.regs[7],
-            r8: regs.regs[8],
-            r9: regs.regs[9],
-            r10: regs.regs[10],
-            r11: regs.regs[11],
-            r12: regs.regs[12],
-            r13: regs.regs[13],
-            r14: regs.regs[14],
-            r15: regs.regs[15],
-            rip: regs.rip,
-            // Update the lower 32-bit of rflags.
-            rflags: (orig_gregs.rflags & !(u32::MAX as u64)) | (regs.eflags as u64),
-        };
-        self.vcpus[0]
-            .lock()
-            .unwrap()
-            .vcpu
-            .set_regs(&gregs)
-            .map_err(Error::CpuDebug)?;
-
-        // Segment registers: CS, SS, DS, ES, FS, GS
-        // Since GDB care only selectors, we call get_sregs() first.
-        let mut sregs = self.read_sregs()?;
-        sregs.cs.selector = regs.segments.cs as u16;
-        sregs.ss.selector = regs.segments.ss as u16;
-        sregs.ds.selector = regs.segments.ds as u16;
-        sregs.es.selector = regs.segments.es as u16;
-        sregs.fs.selector = regs.segments.fs as u16;
-        sregs.gs.selector = regs.segments.gs as u16;
-
-        self.vcpus[0]
-            .lock()
-            .unwrap()
-            .vcpu
-            .set_sregs(&sregs)
-            .map_err(Error::CpuDebug)?;
-
-        // TODO: Add other registers
-
-        Ok(())
-    }
-
-    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
-    pub fn gdb_read_memory(&self, vaddr: GuestAddress, len: usize) -> Result<Vec<u8>> {
-        let mut buf = vec![0; len];
-        let mut total_read = 0_u64;
-
-        while total_read < len as u64 {
-            let paddr = self.translate_gva(vaddr.0 + total_read)?;
-            let psize = 0x1000;
-            let read_len = std::cmp::min(len as u64 - total_read, psize - (paddr & (psize - 1)));
-            self.vmmops
-                .guest_mem_read(
-                    paddr,
-                    &mut buf[total_read as usize..total_read as usize + read_len as usize],
-                )
-                .map_err(Error::VmDebug)?;
-            total_read += read_len;
-        }
-        Ok(buf)
-    }
-
-    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
-    pub fn gdb_write_memory(&self, vaddr: &GuestAddress, data: &[u8]) -> Result<()> {
-        let mut total_written = 0_u64;
-
-        while total_written < data.len() as u64 {
-            let paddr = self.translate_gva(vaddr.0 + total_written)?;
-            let psize = 0x1000;
-            let write_len = std::cmp::min(
-                data.len() as u64 - total_written,
-                psize - (paddr & (psize - 1)),
-            );
-            self.vmmops
-                .guest_mem_write(
-                    paddr,
-                    &data[total_written as usize..total_written as usize + write_len as usize],
-                )
-                .map_err(Error::VmDebug)?;
-            total_written += write_len;
-        }
-        Ok(())
-    }
-
-    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     // return the translated address and the size of the page it resides in.
     fn translate_gva(&self, gva: u64) -> Result<u64> {
         self.vcpus[0]
@@ -1904,6 +1773,149 @@ impl Debuggable for CpuManager {
             })?;
         } else {
             Pausable::resume(self).map_err(DebuggableError::Resume)?;
+        }
+        Ok(())
+    }
+
+    fn read_regs(&self) -> std::result::Result<X86_64CoreRegs, DebuggableError> {
+        // General registers: RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, r8-r15
+        let gregs = self.read_gregs().map_err(DebuggableError::ReadRegs)?;
+        let regs = [
+            gregs.rax, gregs.rbx, gregs.rcx, gregs.rdx, gregs.rsi, gregs.rdi, gregs.rbp, gregs.rsp,
+            gregs.r8, gregs.r9, gregs.r10, gregs.r11, gregs.r12, gregs.r13, gregs.r14, gregs.r15,
+        ];
+
+        // GDB exposes 32-bit eflags instead of 64-bit rflags.
+        // https://github.com/bminor/binutils-gdb/blob/master/gdb/features/i386/64bit-core.xml
+        let eflags = gregs.rflags as u32;
+        let rip = gregs.rip;
+
+        // Segment registers: CS, SS, DS, ES, FS, GS
+        let sregs = self.read_sregs().map_err(DebuggableError::ReadRegs)?;
+        let segments = X86SegmentRegs {
+            cs: sregs.cs.selector as u32,
+            ss: sregs.ss.selector as u32,
+            ds: sregs.ds.selector as u32,
+            es: sregs.es.selector as u32,
+            fs: sregs.fs.selector as u32,
+            gs: sregs.gs.selector as u32,
+        };
+
+        // TODO: Add other registers
+
+        Ok(X86_64CoreRegs {
+            regs,
+            eflags,
+            rip,
+            segments,
+            ..Default::default()
+        })
+    }
+
+    fn write_regs(&self, regs: &X86_64CoreRegs) -> std::result::Result<(), DebuggableError> {
+        let orig_gregs = self.read_gregs().map_err(DebuggableError::ReadRegs)?;
+        let gregs = StandardRegisters {
+            rax: regs.regs[0],
+            rbx: regs.regs[1],
+            rcx: regs.regs[2],
+            rdx: regs.regs[3],
+            rsi: regs.regs[4],
+            rdi: regs.regs[5],
+            rbp: regs.regs[6],
+            rsp: regs.regs[7],
+            r8: regs.regs[8],
+            r9: regs.regs[9],
+            r10: regs.regs[10],
+            r11: regs.regs[11],
+            r12: regs.regs[12],
+            r13: regs.regs[13],
+            r14: regs.regs[14],
+            r15: regs.regs[15],
+            rip: regs.rip,
+            // Update the lower 32-bit of rflags.
+            rflags: (orig_gregs.rflags & !(u32::MAX as u64)) | (regs.eflags as u64),
+        };
+        self.vcpus[0]
+            .lock()
+            .unwrap()
+            .vcpu
+            .set_regs(&gregs)
+            .map_err(Error::CpuDebug)
+            .map_err(DebuggableError::WriteRegs)?;
+
+        // Segment registers: CS, SS, DS, ES, FS, GS
+        // Since GDB care only selectors, we call get_sregs() first.
+        let mut sregs = self.read_sregs().map_err(DebuggableError::ReadRegs)?;
+        sregs.cs.selector = regs.segments.cs as u16;
+        sregs.ss.selector = regs.segments.ss as u16;
+        sregs.ds.selector = regs.segments.ds as u16;
+        sregs.es.selector = regs.segments.es as u16;
+        sregs.fs.selector = regs.segments.fs as u16;
+        sregs.gs.selector = regs.segments.gs as u16;
+
+        self.vcpus[0]
+            .lock()
+            .unwrap()
+            .vcpu
+            .set_sregs(&sregs)
+            .map_err(Error::CpuDebug)
+            .map_err(DebuggableError::WriteRegs)?;
+
+        // TODO: Add other registers
+
+        Ok(())
+    }
+
+    fn read_mem(
+        &self,
+        vaddr: GuestAddress,
+        len: usize,
+    ) -> std::result::Result<Vec<u8>, DebuggableError> {
+        let mut buf = vec![0; len];
+        let mut total_read = 0_u64;
+
+        while total_read < len as u64 {
+            let paddr = self
+                .translate_gva(vaddr.0 + total_read)
+                .map_err(DebuggableError::TranslateGVA)?;
+            let psize = 0x1000;
+            let read_len = std::cmp::min(len as u64 - total_read, psize - (paddr & (psize - 1)));
+            self.vmmops
+                .guest_mem_read(
+                    paddr,
+                    &mut buf[total_read as usize..total_read as usize + read_len as usize],
+                )
+                .map_err(Error::VmDebug)
+                .map_err(DebuggableError::ReadMem)?;
+            total_read += read_len;
+        }
+        Ok(buf)
+    }
+
+    fn write_mem(
+        &self,
+        vaddr: &GuestAddress,
+        data: &[u8],
+    ) -> std::result::Result<(), DebuggableError> {
+        let mut total_written = 0_u64;
+
+        while total_written < data.len() as u64 {
+            let paddr = self
+                .translate_gva(vaddr.0 + total_written)
+                .map_err(DebuggableError::TranslateGVA)?;
+            let psize = 0x1000;
+            let write_len = std::cmp::min(
+                data.len() as u64 - total_written,
+                psize - (paddr & (psize - 1)),
+            );
+            self.vmmops
+                .guest_mem_write(
+                    paddr,
+                    &data[total_written as usize..total_written as usize + write_len as usize],
+                )
+                .map_err(Error::VmDebug)
+                .map_err(DebuggableError::WriteMem)?;
+            total_written += write_len;
         }
         Ok(())
     }

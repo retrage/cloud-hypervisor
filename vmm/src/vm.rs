@@ -287,11 +287,7 @@ pub enum Error {
 
     /// Error pausing debug VM
     #[cfg(feature = "gdb")]
-    DebugPause(DebuggableError),
-
-    /// Error resuming debug VM
-    #[cfg(feature = "gdb")]
-    DebugResume(DebuggableError),
+    Debug(DebuggableError),
 }
 pub type Result<T> = result::Result<T, Error>;
 
@@ -2434,7 +2430,7 @@ impl Vm {
                     .lock()
                     .unwrap()
                     .debug_pause()
-                    .map_err(Error::DebugPause)?;
+                    .map_err(Error::Debug)?;
                 let mut state = self.state.try_write().map_err(|_| Error::PoisonedState)?;
                 *state = VmState::BreakPoint;
                 Ok(GdbResponsePayload::VmDebugStatus(
@@ -2446,7 +2442,7 @@ impl Vm {
                     .lock()
                     .unwrap()
                     .debug_resume()
-                    .map_err(Error::DebugResume)?;
+                    .map_err(Error::Debug)?;
                 let mut state = self.state.try_write().map_err(|_| Error::PoisonedState)?;
                 *state = VmState::Running;
                 Ok(GdbResponsePayload::VmDebugStatus(
@@ -2458,16 +2454,16 @@ impl Vm {
                     .cpu_manager
                     .lock()
                     .unwrap()
-                    .gdb_read_registers()
-                    .map_err(Error::CpuManager)?;
+                    .read_regs()
+                    .map_err(Error::Debug)?;
                 Ok(crate::gdb::GdbResponsePayload::RegValues(Box::new(regs)))
             }
             GdbRequestPayload::WriteRegs(regs) => {
                 self.cpu_manager
                     .lock()
                     .unwrap()
-                    .gdb_write_registers(regs)
-                    .map_err(Error::CpuManager)?;
+                    .write_regs(regs)
+                    .map_err(Error::Debug)?;
                 Ok(GdbResponsePayload::VmDebugStatus(
                     VmDebugStatus::CommandComplete,
                 ))
@@ -2477,16 +2473,16 @@ impl Vm {
                     .cpu_manager
                     .lock()
                     .unwrap()
-                    .gdb_read_memory(*vaddr, *len)
-                    .map_err(Error::CpuManager)?;
+                    .read_mem(*vaddr, *len)
+                    .map_err(Error::Debug)?;
                 Ok(crate::gdb::GdbResponsePayload::MemoryRegion(mem))
             }
             GdbRequestPayload::WriteMem(vaddr, data) => {
                 self.cpu_manager
                     .lock()
                     .unwrap()
-                    .gdb_write_memory(vaddr, data)
-                    .map_err(Error::CpuManager)?;
+                    .write_mem(vaddr, data)
+                    .map_err(Error::Debug)?;
                 Ok(GdbResponsePayload::VmDebugStatus(
                     VmDebugStatus::CommandComplete,
                 ))

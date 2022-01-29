@@ -90,15 +90,33 @@ pub enum DebuggableError {
     Pause(vm_migration::MigratableError),
 
     Resume(vm_migration::MigratableError),
+
+    ReadRegs(crate::cpu::Error),
+
+    WriteRegs(crate::cpu::Error),
+
+    ReadMem(crate::cpu::Error),
+
+    WriteMem(crate::cpu::Error),
+
+    TranslateGVA(crate::cpu::Error),
 }
 
 pub trait Debuggable: vm_migration::Pausable {
-    fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError> {
-        Ok(())
-    }
-    fn debug_resume(&mut self) -> std::result::Result<(), DebuggableError> {
-        Ok(())
-    }
+    fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError>;
+    fn debug_resume(&mut self) -> std::result::Result<(), DebuggableError>;
+    fn read_regs(&self) -> std::result::Result<CoreRegs, DebuggableError>;
+    fn write_regs(&self, regs: &CoreRegs) -> std::result::Result<(), DebuggableError>;
+    fn read_mem(
+        &self,
+        vaddr: GuestAddress,
+        len: usize,
+    ) -> std::result::Result<Vec<u8>, DebuggableError>;
+    fn write_mem(
+        &self,
+        vaddr: &GuestAddress,
+        data: &[u8],
+    ) -> std::result::Result<(), DebuggableError>;
 }
 
 pub fn gdb_thread(mut gdbstub: GdbStub, path: &str) {
