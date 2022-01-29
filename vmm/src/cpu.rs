@@ -1336,8 +1336,8 @@ impl CpuManager {
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
-    fn read_gregs(&self) -> Result<StandardRegisters> {
-        self.vcpus[0]
+    fn read_gregs(&self, cpu_id: u8) -> Result<StandardRegisters> {
+        self.vcpus[usize::from(cpu_id)]
             .lock()
             .unwrap()
             .vcpu
@@ -1346,8 +1346,8 @@ impl CpuManager {
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
-    fn read_sregs(&self) -> Result<SpecialRegisters> {
-        self.vcpus[0]
+    fn read_sregs(&self, cpu_id: u8) -> Result<SpecialRegisters> {
+        self.vcpus[usize::from(cpu_id)]
             .lock()
             .unwrap()
             .vcpu
@@ -1357,8 +1357,8 @@ impl CpuManager {
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     // return the translated address and the size of the page it resides in.
-    fn translate_gva(&self, gva: u64) -> Result<u64> {
-        self.vcpus[0]
+    fn translate_gva(&self, cpu_id: u8, gva: u64) -> Result<u64> {
+        self.vcpus[usize::from(cpu_id)]
             .lock()
             .unwrap()
             .vcpu
@@ -1784,8 +1784,12 @@ impl Debuggable for CpuManager {
 
     #[cfg(target_arch = "x86_64")]
     fn read_regs(&self) -> std::result::Result<X86_64CoreRegs, DebuggableError> {
+        const DEBUG_CPU: u8 = 0; // Supports 1 vCPU at this moment
+        assert!(self.boot_vcpus() > DEBUG_CPU);
         // General registers: RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, r8-r15
-        let gregs = self.read_gregs().map_err(DebuggableError::ReadRegs)?;
+        let gregs = self
+            .read_gregs(DEBUG_CPU)
+            .map_err(DebuggableError::ReadRegs)?;
         let regs = [
             gregs.rax, gregs.rbx, gregs.rcx, gregs.rdx, gregs.rsi, gregs.rdi, gregs.rbp, gregs.rsp,
             gregs.r8, gregs.r9, gregs.r10, gregs.r11, gregs.r12, gregs.r13, gregs.r14, gregs.r15,
@@ -1797,7 +1801,9 @@ impl Debuggable for CpuManager {
         let rip = gregs.rip;
 
         // Segment registers: CS, SS, DS, ES, FS, GS
-        let sregs = self.read_sregs().map_err(DebuggableError::ReadRegs)?;
+        let sregs = self
+            .read_sregs(DEBUG_CPU)
+            .map_err(DebuggableError::ReadRegs)?;
         let segments = X86SegmentRegs {
             cs: sregs.cs.selector as u32,
             ss: sregs.ss.selector as u32,
@@ -1820,7 +1826,11 @@ impl Debuggable for CpuManager {
 
     #[cfg(target_arch = "x86_64")]
     fn write_regs(&self, regs: &X86_64CoreRegs) -> std::result::Result<(), DebuggableError> {
-        let orig_gregs = self.read_gregs().map_err(DebuggableError::ReadRegs)?;
+        const DEBUG_CPU: u8 = 0; // Supports 1 vCPU at this moment
+        assert!(self.boot_vcpus() > DEBUG_CPU);
+        let orig_gregs = self
+            .read_gregs(DEBUG_CPU)
+            .map_err(DebuggableError::ReadRegs)?;
         let gregs = StandardRegisters {
             rax: regs.regs[0],
             rbx: regs.regs[1],
@@ -1842,7 +1852,7 @@ impl Debuggable for CpuManager {
             // Update the lower 32-bit of rflags.
             rflags: (orig_gregs.rflags & !(u32::MAX as u64)) | (regs.eflags as u64),
         };
-        self.vcpus[0]
+        self.vcpus[usize::from(DEBUG_CPU)]
             .lock()
             .unwrap()
             .vcpu
@@ -1852,7 +1862,9 @@ impl Debuggable for CpuManager {
 
         // Segment registers: CS, SS, DS, ES, FS, GS
         // Since GDB care only selectors, we call get_sregs() first.
-        let mut sregs = self.read_sregs().map_err(DebuggableError::ReadRegs)?;
+        let mut sregs = self
+            .read_sregs(DEBUG_CPU)
+            .map_err(DebuggableError::ReadRegs)?;
         sregs.cs.selector = regs.segments.cs as u16;
         sregs.ss.selector = regs.segments.ss as u16;
         sregs.ds.selector = regs.segments.ds as u16;
@@ -1860,7 +1872,7 @@ impl Debuggable for CpuManager {
         sregs.fs.selector = regs.segments.fs as u16;
         sregs.gs.selector = regs.segments.gs as u16;
 
-        self.vcpus[0]
+        self.vcpus[usize::from(DEBUG_CPU)]
             .lock()
             .unwrap()
             .vcpu
@@ -1879,12 +1891,15 @@ impl Debuggable for CpuManager {
         vaddr: GuestAddress,
         len: usize,
     ) -> std::result::Result<Vec<u8>, DebuggableError> {
+        const DEBUG_CPU: u8 = 0; // Supports 1 vCPU at this moment
+        assert!(self.boot_vcpus() > DEBUG_CPU);
+
         let mut buf = vec![0; len];
         let mut total_read = 0_u64;
 
         while total_read < len as u64 {
             let paddr = self
-                .translate_gva(vaddr.0 + total_read)
+                .translate_gva(DEBUG_CPU, vaddr.0 + total_read)
                 .map_err(DebuggableError::TranslateGVA)?;
             let psize = 0x1000;
             let read_len = std::cmp::min(len as u64 - total_read, psize - (paddr & (psize - 1)));
@@ -1906,11 +1921,14 @@ impl Debuggable for CpuManager {
         vaddr: &GuestAddress,
         data: &[u8],
     ) -> std::result::Result<(), DebuggableError> {
+        const DEBUG_CPU: u8 = 0; // Supports 1 vCPU at this moment
+        assert!(self.boot_vcpus() > DEBUG_CPU);
+
         let mut total_written = 0_u64;
 
         while total_written < data.len() as u64 {
             let paddr = self
-                .translate_gva(vaddr.0 + total_written)
+                .translate_gva(DEBUG_CPU, vaddr.0 + total_written)
                 .map_err(DebuggableError::TranslateGVA)?;
             let psize = 0x1000;
             let write_len = std::cmp::min(
