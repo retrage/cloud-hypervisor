@@ -268,6 +268,8 @@ pub enum VmExit<'a> {
     Hyperv,
     #[cfg(feature = "tdx")]
     Tdx,
+    #[cfg(feature = "kvm")]
+    Debug,
 }
 
 ///
