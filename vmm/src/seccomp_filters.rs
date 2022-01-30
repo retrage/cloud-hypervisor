@@ -294,6 +294,10 @@ fn create_vmm_ioctl_seccomp_rule_kvm() -> Result<Vec<SeccompRule>, BackendError>
     const KVM_SET_TSS_ADDR: u64 = 0xae47;
     const KVM_SET_XCRS: u64 = 0x4188_aea7;
     const KVM_SET_XSAVE: u64 = 0x5000_aea5;
+    #[cfg(feature = "gdb")]
+    const KVM_SET_GUEST_DEBUG: u64 = 0x4048_ae9b;
+    #[cfg(feature = "gdb")]
+    const KVM_TRANSLATE: u64 = 0xc018_ae85;
 
     let common_rules = create_vmm_ioctl_seccomp_rule_common()?;
     let mut arch_rules = or![
@@ -318,6 +322,10 @@ fn create_vmm_ioctl_seccomp_rule_kvm() -> Result<Vec<SeccompRule>, BackendError>
         and![Cond::new(1, ArgLen::Dword, Eq, KVM_SET_MSRS)?],
         and![Cond::new(1, ArgLen::Dword, Eq, KVM_SET_XCRS,)?],
         and![Cond::new(1, ArgLen::Dword, Eq, KVM_SET_XSAVE,)?],
+        #[cfg(feature = "gdb")]
+        and![Cond::new(1, ArgLen::Dword, Eq, KVM_SET_GUEST_DEBUG,)?],
+        #[cfg(feature = "gdb")]
+        and![Cond::new(1, ArgLen::Dword, Eq, KVM_TRANSLATE,)?],
     ];
     arch_rules.extend(common_rules);
 
