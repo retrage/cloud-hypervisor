@@ -2410,11 +2410,11 @@ impl Vm {
     ) -> Result<GdbResponsePayload> {
         match gdb_request {
             GdbRequestPayload::SetSingleStep(single_step) => {
-                self.set_guest_debug(&[], *single_step)
+                self.set_guest_debug(cpu_id, &[], *single_step)
                     .map_err(Error::Debug)?;
             }
             GdbRequestPayload::SetHwBreakPoint(addrs) => {
-                self.set_guest_debug(addrs, false).map_err(Error::Debug)?;
+                self.set_guest_debug(cpu_id, addrs, false).map_err(Error::Debug)?;
             }
             GdbRequestPayload::Pause => {
                 self.debug_pause().map_err(Error::Debug)?;
@@ -2757,13 +2757,14 @@ impl Migratable for Vm {
 impl Debuggable for Vm {
     fn set_guest_debug(
         &self,
+        cpu_id: usize,
         addrs: &[GuestAddress],
         enable_singlestep: bool,
     ) -> std::result::Result<(), DebuggableError> {
         self.cpu_manager
             .lock()
             .unwrap()
-            .set_guest_debug(addrs, enable_singlestep)
+            .set_guest_debug(cpu_id, addrs, enable_singlestep)
     }
 
     fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError> {

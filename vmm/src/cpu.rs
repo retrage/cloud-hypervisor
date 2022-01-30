@@ -1749,19 +1749,17 @@ impl Debuggable for CpuManager {
     #[cfg(feature = "kvm")]
     fn set_guest_debug(
         &self,
+        cpu_id: usize,
         addrs: &[GuestAddress],
         enable_singlestep: bool,
     ) -> std::result::Result<(), DebuggableError> {
-        for cpu_id in 0..self.active_vpus() {
-            self.vcpus[cpu_id]
-                .lock()
-                .unwrap()
-                .vcpu
-                .set_guest_debug(addrs, enable_singlestep)
-                .map_err(Error::CpuDebug)
-                .map_err(DebuggableError::SetDebug)?;
-        }
-        Ok(())
+        self.vcpus[cpu_id]
+            .lock()
+            .unwrap()
+            .vcpu
+            .set_guest_debug(addrs, enable_singlestep)
+            .map_err(Error::CpuDebug)
+            .map_err(DebuggableError::SetDebug)
     }
 
     fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError> {

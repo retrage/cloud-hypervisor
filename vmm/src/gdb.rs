@@ -85,6 +85,7 @@ pub enum DebuggableError {
 pub trait Debuggable: vm_migration::Pausable {
     fn set_guest_debug(
         &self,
+        cpu_id: usize,
         addrs: &[GuestAddress],
         enable_singlestep: bool,
     ) -> Result<(), DebuggableError>;
