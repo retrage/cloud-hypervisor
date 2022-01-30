@@ -488,7 +488,7 @@ impl run_blocking::BlockingEventLoop for GdbEventLoop {
         loop {
             // This read is non-blocking.
             match target.vm_event.read() {
-                Ok(cpu_id) => {
+                Ok(tid) => {
                     target
                         .vm_request(GdbRequestPayload::Pause, 0)
                         .map_err(|_| {
@@ -499,7 +499,7 @@ impl run_blocking::BlockingEventLoop for GdbEventLoop {
                     let stop_reason = if target.single_step {
                         MultiThreadStopReason::DoneStep
                     } else {
-                        MultiThreadStopReason::HwBreak(cpuid_to_tid(cpu_id as usize))
+                        MultiThreadStopReason::HwBreak(Tid::new(tid as usize).unwrap())
                     };
                     return Ok(run_blocking::Event::TargetStopped(stop_reason));
                 }

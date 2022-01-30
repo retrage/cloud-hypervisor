@@ -886,8 +886,12 @@ impl CpuManager {
                                     #[cfg(all(target_arch = "x86_64", feature = "kvm"))]
                                     VmExit::Debug => {
                                         info!("VmExit::Debug");
-                                        vcpu_pause_signalled.store(true, Ordering::SeqCst);
-                                        vm_debug_evt.write(vcpu_id as u64).unwrap();
+                                        #[cfg(feature = "gdb")]
+                                        {
+                                            vcpu_pause_signalled.store(true, Ordering::SeqCst);
+                                            let gdb_tid = u64::from(vcpu_id + 1);
+                                            vm_debug_evt.write(gdb_tid).unwrap();
+                                        }
                                     }
                                     #[cfg(target_arch = "x86_64")]
                                     VmExit::IoapicEoi(vector) => {
