@@ -958,6 +958,22 @@ impl cpu::Vcpu for KvmVcpu {
             .set_xcrs(xcrs)
             .map_err(|e| cpu::HypervisorCpuError::SetXcsr(e.into()))
     }
+    #[cfg(target_arch = "x86_64")]
+    ///
+    /// Translates guest virtual address to guest physical address using the `KVM_TRANSLATE` ioctl.
+    ///
+    fn translate_gva(&self, gva: u64) -> cpu::Result<u64> {
+        let tr = self
+            .fd
+            .translate_gva(gva)
+            .map_err(|e| cpu::HypervisorCpuError::TranslateVirtualAddress(e.into()))?;
+        match tr.valid {
+            0 => Err(cpu::HypervisorCpuError::TranslateVirtualAddress(anyhow!(
+                "Page not present"
+            ))),
+            _ => Ok(tr.physical_address),
+        }
+    }
     ///
     /// Triggers the running of the current virtual CPU returning an exit reason.
     ///
