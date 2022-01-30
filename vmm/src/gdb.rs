@@ -39,17 +39,11 @@ pub enum Error {
 type GdbResult<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
-pub enum VmDebugStatus {
-    CommandComplete,
-    HitBreakPoint,
-}
-
-#[derive(Debug)]
 pub enum GdbResponsePayload {
     Empty,
+    CommandComplete,
     RegValues(Box<CoreRegs>),
     MemoryRegion(Vec<u8>),
-    VmDebugStatus(VmDebugStatus),
     ActiveVcpus(usize),
 }
 
@@ -72,20 +66,6 @@ pub enum GdbRequestPayload {
     Resume,
     SetSingleStep(bool),
     SetHwBreakPoint(Vec<vm_memory::GuestAddress>),
-    ActiveVcpus,
-}
-
-#[repr(u64)]
-#[derive(Debug)]
-pub enum GdbResponseEventKind {
-    ReadRegs = 1,
-    WriteRegs,
-    ReadMem,
-    WriteMem,
-    Pause,
-    Resume,
-    SetSingleStep,
-    SetHwBreakPoint,
     ActiveVcpus,
 }
 
@@ -217,23 +197,10 @@ impl GdbStub {
             payload,
             cpu_id,
         };
-        let event_value = match request.payload {
-            GdbRequestPayload::ReadRegs => GdbResponseEventKind::ReadRegs,
-            GdbRequestPayload::WriteRegs(_) => GdbResponseEventKind::WriteRegs,
-            GdbRequestPayload::ReadMem(_, _) => GdbResponseEventKind::ReadMem,
-            GdbRequestPayload::WriteMem(_, _) => GdbResponseEventKind::WriteMem,
-            GdbRequestPayload::Pause => GdbResponseEventKind::Pause,
-            GdbRequestPayload::Resume => GdbResponseEventKind::Resume,
-            GdbRequestPayload::SetSingleStep(_) => GdbResponseEventKind::SetSingleStep,
-            GdbRequestPayload::SetHwBreakPoint(_) => GdbResponseEventKind::SetHwBreakPoint,
-            GdbRequestPayload::ActiveVcpus => GdbResponseEventKind::ActiveVcpus,
-        };
         self.gdb_sender
             .send(request)
             .map_err(|_| Error::GdbRequest)?;
-        self.gdb_event
-            .write(event_value as u64)
-            .map_err(Error::GdbResponseNotify)?;
+        self.gdb_event.write(1).map_err(Error::GdbResponseNotify)?;
         let res = response_receiver.recv().map_err(Error::GdbResponse)??;
         Ok(res)
     }

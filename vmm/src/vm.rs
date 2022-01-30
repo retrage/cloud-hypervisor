@@ -2408,8 +2408,6 @@ impl Vm {
         gdb_request: &GdbRequestPayload,
         cpu_id: usize,
     ) -> Result<GdbResponsePayload> {
-        use crate::gdb::VmDebugStatus;
-
         match gdb_request {
             GdbRequestPayload::SetSingleStep(single_step) => {
                 self.set_guest_debug(&[], *single_step)
@@ -2426,26 +2424,24 @@ impl Vm {
             }
             GdbRequestPayload::ReadRegs => {
                 let regs = self.read_regs(cpu_id).map_err(Error::Debug)?;
-                return Ok(crate::gdb::GdbResponsePayload::RegValues(Box::new(regs)));
+                return Ok(GdbResponsePayload::RegValues(Box::new(regs)));
             }
             GdbRequestPayload::WriteRegs(regs) => {
                 self.write_regs(cpu_id, regs).map_err(Error::Debug)?;
             }
             GdbRequestPayload::ReadMem(vaddr, len) => {
                 let mem = self.read_mem(cpu_id, *vaddr, *len).map_err(Error::Debug)?;
-                return Ok(crate::gdb::GdbResponsePayload::MemoryRegion(mem));
+                return Ok(GdbResponsePayload::MemoryRegion(mem));
             }
             GdbRequestPayload::WriteMem(vaddr, data) => {
                 self.write_mem(cpu_id, vaddr, data).map_err(Error::Debug)?;
             }
             GdbRequestPayload::ActiveVcpus => {
                 let active_vcpus = self.active_vpus();
-                return Ok(crate::gdb::GdbResponsePayload::ActiveVcpus(active_vcpus));
+                return Ok(GdbResponsePayload::ActiveVcpus(active_vcpus));
             }
         }
-        Ok(GdbResponsePayload::VmDebugStatus(
-            VmDebugStatus::CommandComplete,
-        ))
+        Ok(GdbResponsePayload::CommandComplete)
     }
 }
 
