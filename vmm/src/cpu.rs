@@ -1946,7 +1946,7 @@ impl Debuggable for CpuManager {
         Ok(())
     }
 
-    fn active_vpus(&self) -> usize {
+    fn active_vcpus(&self) -> usize {
         self.present_vcpus() as usize
     }
 }

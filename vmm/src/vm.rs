@@ -2437,7 +2437,7 @@ impl Vm {
                 self.write_mem(cpu_id, vaddr, data).map_err(Error::Debug)?;
             }
             GdbRequestPayload::ActiveVcpus => {
-                let active_vcpus = self.active_vpus();
+                let active_vcpus = self.active_vcpus();
                 return Ok(GdbResponsePayload::ActiveVcpus(active_vcpus));
             }
         }
@@ -2822,11 +2822,11 @@ impl Debuggable for Vm {
             .write_mem(cpu_id, vaddr, data)
     }
 
-    fn active_vpus(&self) -> usize {
+    fn active_vcpus(&self) -> usize {
         if self.get_state().unwrap() == VmState::Created {
             self.cpu_manager.lock().unwrap().boot_vcpus() as usize
         } else {
-            self.cpu_manager.lock().unwrap().active_vpus()
+            self.cpu_manager.lock().unwrap().active_vcpus()
         }
     }
 }

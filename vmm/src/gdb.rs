@@ -108,7 +108,7 @@ pub trait Debuggable: vm_migration::Pausable {
         vaddr: &GuestAddress,
         data: &[u8],
     ) -> std::result::Result<(), DebuggableError>;
-    fn active_vpus(&self) -> usize;
+    fn active_vcpus(&self) -> usize;
 }
 
 pub fn gdb_thread(mut gdbstub: GdbStub, path: &str) {
