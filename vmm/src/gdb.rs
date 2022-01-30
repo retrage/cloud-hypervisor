@@ -343,22 +343,17 @@ impl MultiThreadBase for GdbStub {
 
 impl MultiThreadResume for GdbStub {
     fn resume(&mut self) -> Result<(), Self::Error> {
-        info!("resume()");
         match self.vm_request(GdbRequestPayload::Resume, 0) {
             Ok(_) => Ok(()),
-            Err(e) => {
-                return Err(format!("Failed to resume the target: {:?}", e));
-            }
+            Err(e) => Err(format!("Failed to resume the target: {:?}", e)),
         }
     }
 
     fn clear_resume_actions(&mut self) -> Result<(), Self::Error> {
-        info!("clear_resume_actions()");
         if self.single_step {
             match self.vm_request(GdbRequestPayload::SetSingleStep(false), 0) {
                 Ok(_) => {
                     self.single_step = false;
-                    return Ok(());
                 }
                 Err(e) => {
                     return Err(format!("Failed to request SetSingleStep: {:?}", e));
@@ -378,9 +373,7 @@ impl MultiThreadResume for GdbStub {
         }
         match self.vm_request(GdbRequestPayload::Resume, tid_to_cpuid(tid)) {
             Ok(_) => Ok(()),
-            Err(e) => {
-                return Err(format!("Failed to resume the target: {:?}", e));
-            }
+            Err(e) => Err(format!("Failed to resume the target: {:?}", e)),
         }
     }
 
@@ -435,7 +428,7 @@ impl HwBreakpoint for GdbStub {
         // If we already have 4 breakpoints, we cannot set a new one.
         if self.hw_breakpoints.len() >= 4 {
             error!("Not allowed to set more than 4 HW breakpoints");
-            return Err(TargetError::NonFatal);
+            return Ok(false);
         }
 
         self.hw_breakpoints.push(GuestAddress(addr));
@@ -454,7 +447,10 @@ impl HwBreakpoint for GdbStub {
         addr: <Self::Arch as Arch>::Usize,
         _kind: <Self::Arch as Arch>::BreakpointKind,
     ) -> TargetResult<bool, Self> {
-        self.hw_breakpoints.retain(|&b| b.0 != addr);
+        match self.hw_breakpoints.iter().position(|&b| b.0 == addr) {
+            None => return Ok(false),
+            Some(pos) => self.hw_breakpoints.remove(pos),
+        };
 
         let payload = GdbRequestPayload::SetHwBreakPoint(self.hw_breakpoints.clone());
         match self.vm_request(payload, 0) {
