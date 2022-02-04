@@ -147,6 +147,20 @@ pub enum Error {
     /// Error binding API server socket
     #[error("Error creation API server's socket {0:?}")]
     CreateApiServerSocket(#[source] io::Error),
+
+    #[cfg(feature = "gdb")]
+    #[error("Failed to start the GDB thread: {0}")]
+    GdbThreadSpawn(io::Error),
+
+    /// GDB request receive error
+    #[cfg(feature = "gdb")]
+    #[error("Error receiving GDB request: {0}")]
+    GdbRequestRecv(#[source] RecvError),
+
+    /// GDB response send error
+    #[cfg(feature = "gdb")]
+    #[error("Error sending GDB request: {0}")]
+    GdbResponseSend(#[source] SendError<gdb::GdbResponse>),
 }
 pub type Result<T> = result::Result<T, Error>;
 
@@ -157,6 +171,7 @@ pub enum EpollDispatch {
     Reset = 1,
     Api = 2,
     ActivateVirtioDevices = 3,
+    Debug = 4,
     Unknown,
 }
 
@@ -168,6 +183,7 @@ impl From<u64> for EpollDispatch {
             1 => Reset,
             2 => Api,
             3 => ActivateVirtioDevices,
+            4 => Debug,
             _ => Unknown,
         }
     }
@@ -229,6 +245,7 @@ impl Serialize for PciDeviceInfo {
     }
 }
 
+#[allow(unused_variables)]
 #[allow(clippy::too_many_arguments)]
 pub fn start_vmm_thread(
     vmm_version: String,
@@ -237,9 +254,19 @@ pub fn start_vmm_thread(
     api_event: EventFd,
     api_sender: Sender<ApiRequest>,
     api_receiver: Receiver<ApiRequest>,
+    debug_path: Option<String>,
+    debug_event: EventFd,
+    vm_debug_event: EventFd,
     seccomp_action: &SeccompAction,
     hypervisor: Arc<dyn hypervisor::Hypervisor>,
 ) -> Result<thread::JoinHandle<Result<()>>> {
+    #[cfg(feature = "gdb")]
+    let (gdb_sender, gdb_receiver) = std::sync::mpsc::channel();
+    #[cfg(feature = "gdb")]
+    let gdb_debug_event = debug_event.try_clone().map_err(Error::EventFdClone)?;
+    #[cfg(feature = "gdb")]
+    let gdb_vm_debug_event = vm_debug_event.try_clone().map_err(Error::EventFdClone)?;
+
     let http_api_event = api_event.try_clone().map_err(Error::EventFdClone)?;
 
     // Retrieve seccomp filter
@@ -261,12 +288,18 @@ pub fn start_vmm_thread(
                 let mut vmm = Vmm::new(
                     vmm_version.to_string(),
                     api_event,
+                    debug_event,
+                    vm_debug_event,
                     vmm_seccomp_action,
                     hypervisor,
                     exit_evt,
                 )?;
 
-                vmm.control_loop(Arc::new(api_receiver))
+                vmm.control_loop(
+                    Arc::new(api_receiver),
+                    #[cfg(feature = "gdb")]
+                    Arc::new(gdb_receiver),
+                )
             })
             .map_err(Error::VmmThreadSpawn)?
     };
@@ -289,6 +322,16 @@ pub fn start_vmm_thread(
             exit_evt,
         )?;
     }
+
+    #[cfg(feature = "gdb")]
+    if let Some(debug_path) = debug_path {
+        let target = gdb::GdbStub::new(gdb_sender, gdb_debug_event, gdb_vm_debug_event);
+        thread::Builder::new()
+            .name("gdb".to_owned())
+            .spawn(move || gdb::gdb_thread(target, &debug_path))
+            .map_err(Error::GdbThreadSpawn)?;
+    }
+
     Ok(thread)
 }
 
@@ -300,11 +343,14 @@ struct VmMigrationConfig {
     memory_manager_data: MemoryManagerSnapshotData,
 }
 
+#[allow(dead_code)]
 pub struct Vmm {
     epoll: EpollContext,
     exit_evt: EventFd,
     reset_evt: EventFd,
     api_evt: EventFd,
+    debug_evt: EventFd,
+    vm_debug_evt: EventFd,
     version: String,
     vm: Option<Vm>,
     vm_config: Option<Arc<Mutex<VmConfig>>>,
@@ -317,6 +363,8 @@ impl Vmm {
     fn new(
         vmm_version: String,
         api_evt: EventFd,
+        debug_evt: EventFd,
+        vm_debug_evt: EventFd,
         seccomp_action: SeccompAction,
         hypervisor: Arc<dyn hypervisor::Hypervisor>,
         exit_evt: EventFd,
@@ -341,11 +389,17 @@ impl Vmm {
             .add_event(&api_evt, EpollDispatch::Api)
             .map_err(Error::Epoll)?;
 
+        epoll
+            .add_event(&debug_evt, EpollDispatch::Debug)
+            .map_err(Error::Epoll)?;
+
         Ok(Vmm {
             epoll,
             exit_evt,
             reset_evt,
             api_evt,
+            debug_evt,
+            vm_debug_evt,
             version: vmm_version,
             vm: None,
             vm_config: None,
@@ -376,6 +430,10 @@ impl Vmm {
         if self.vm.is_none() {
             let exit_evt = self.exit_evt.try_clone().map_err(VmError::EventFdClone)?;
             let reset_evt = self.reset_evt.try_clone().map_err(VmError::EventFdClone)?;
+            let vm_debug_evt = self
+                .vm_debug_evt
+                .try_clone()
+                .map_err(VmError::EventFdClone)?;
             let activate_evt = self
                 .activate_evt
                 .try_clone()
@@ -386,6 +444,7 @@ impl Vmm {
                     Arc::clone(vm_config),
                     exit_evt,
                     reset_evt,
+                    vm_debug_evt,
                     &self.seccomp_action,
                     self.hypervisor.clone(),
                     activate_evt,
@@ -462,6 +521,10 @@ impl Vmm {
 
         let exit_evt = self.exit_evt.try_clone().map_err(VmError::EventFdClone)?;
         let reset_evt = self.reset_evt.try_clone().map_err(VmError::EventFdClone)?;
+        let debug_evt = self
+            .vm_debug_evt
+            .try_clone()
+            .map_err(VmError::EventFdClone)?;
         let activate_evt = self
             .activate_evt
             .try_clone()
@@ -472,6 +535,7 @@ impl Vmm {
             vm_config,
             exit_evt,
             reset_evt,
+            debug_evt,
             Some(source_url),
             restore_cfg.prefault,
             &self.seccomp_action,
@@ -520,6 +584,10 @@ impl Vmm {
 
             let exit_evt = self.exit_evt.try_clone().map_err(VmError::EventFdClone)?;
             let reset_evt = self.reset_evt.try_clone().map_err(VmError::EventFdClone)?;
+            let debug_evt = self
+                .vm_debug_evt
+                .try_clone()
+                .map_err(VmError::EventFdClone)?;
             let activate_evt = self
                 .activate_evt
                 .try_clone()
@@ -535,6 +603,7 @@ impl Vmm {
                 config,
                 exit_evt,
                 reset_evt,
+                debug_evt,
                 &self.seccomp_action,
                 self.hypervisor.clone(),
                 activate_evt,
@@ -793,6 +862,9 @@ impl Vmm {
         let reset_evt = self.reset_evt.try_clone().map_err(|e| {
             MigratableError::MigrateReceive(anyhow!("Error cloning reset EventFd: {}", e))
         })?;
+        let debug_evt = self.vm_debug_evt.try_clone().map_err(|e| {
+            MigratableError::MigrateReceive(anyhow!("Error cloning debug EventFd: {}", e))
+        })?;
         let activate_evt = self.activate_evt.try_clone().map_err(|e| {
             MigratableError::MigrateReceive(anyhow!("Error cloning activate EventFd: {}", e))
         })?;
@@ -802,6 +874,7 @@ impl Vmm {
             self.vm_config.clone().unwrap(),
             exit_evt,
             reset_evt,
+            debug_evt,
             &self.seccomp_action,
             self.hypervisor.clone(),
             activate_evt,
@@ -1284,7 +1357,11 @@ impl Vmm {
         })
     }
 
-    fn control_loop(&mut self, api_receiver: Arc<Receiver<ApiRequest>>) -> Result<()> {
+    fn control_loop(
+        &mut self,
+        api_receiver: Arc<Receiver<ApiRequest>>,
+        #[cfg(feature = "gdb")] gdb_receiver: Arc<Receiver<gdb::GdbRequest>>,
+    ) -> Result<()> {
         const EPOLL_EVENTS_LEN: usize = 100;
 
         let mut events = vec![epoll::Event::new(epoll::Events::empty(), 0); EPOLL_EVENTS_LEN];
@@ -1553,6 +1630,28 @@ impl Vmm {
                             }
                         }
                     }
+                    #[cfg(feature = "gdb")]
+                    EpollDispatch::Debug => {
+                        // Consume the event.
+                        self.debug_evt.read().map_err(Error::EventFdRead)?;
+
+                        // Read from the API receiver channel
+                        let gdb_request = gdb_receiver.recv().map_err(Error::GdbRequestRecv)?;
+
+                        let response = if let Some(ref mut vm) = self.vm {
+                            vm.debug_request(&gdb_request.payload, gdb_request.cpu_id)
+                        } else {
+                            Err(VmError::VmNotRunning)
+                        }
+                        .map_err(gdb::Error::Vm);
+
+                        gdb_request
+                            .sender
+                            .send(response)
+                            .map_err(Error::GdbResponseSend)?;
+                    }
+                    #[cfg(not(feature = "gdb"))]
+                    EpollDispatch::Debug => {}
                 }
             }
         }

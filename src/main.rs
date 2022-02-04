@@ -32,6 +32,8 @@ use vmm_sys_util::signal::block_signal;
 enum Error {
     #[error("Failed to create API EventFd: {0}")]
     CreateApiEventFd(#[source] std::io::Error),
+    #[error("Failed to create Debug EventFd: {0}")]
+    CreateDebugEventFd(#[source] std::io::Error),
     #[cfg_attr(
         feature = "kvm",
         error("Failed to open hypervisor interface (is /dev/kvm available?): {0}")
@@ -376,6 +378,15 @@ fn create_app<'a>(
             .group("vm-config"),
     );
 
+    #[cfg(feature = "gdb")]
+    let app = app.arg(
+        Arg::new("gdb")
+            .long("gdb")
+            .help("GDB socket (UNIX domain socket): </path/to/a/file>")
+            .takes_value(true)
+            .group("vmm-config"),
+    );
+
     #[cfg(feature = "tdx")]
     let app = app.arg(
         Arg::new("tdx")
@@ -513,6 +524,14 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
     event!("vmm", "starting");
 
     let hypervisor = hypervisor::new().map_err(Error::CreateHypervisor)?;
+
+    let debug_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateDebugEventFd)?;
+    let vm_debug_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateDebugEventFd)?;
+    #[cfg(feature = "gdb")]
+    let gdb_socket_path = cmd_arguments.value_of("gdb").map(String::from);
+    #[cfg(not(feature = "gdb"))]
+    let gdb_socket_path: Option<String> = None;
+
     let vmm_thread = vmm::start_vmm_thread(
         env!("CARGO_PKG_VERSION").to_string(),
         &api_socket_path,
@@ -520,6 +539,9 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
         api_evt.try_clone().unwrap(),
         http_sender,
         api_request_receiver,
+        gdb_socket_path.map(String::from),
+        debug_evt.try_clone().unwrap(),
+        vm_debug_evt.try_clone().unwrap(),
         &seccomp_action,
         hypervisor,
     )
@@ -687,6 +709,8 @@ mod unit_tests {
             watchdog: false,
             #[cfg(feature = "tdx")]
             tdx: None,
+            #[cfg(feature = "gdb")]
+            gdb: false,
             platform: None,
         };
 
