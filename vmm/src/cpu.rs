@@ -1437,7 +1437,7 @@ impl CpuManager {
             .lock()
             .unwrap()
             .vcpu
-            .translate_gva(gva)
+            .translate_gva(gva, 0)
             .map_err(Error::TranslateVirtualAddress)
     }
 
