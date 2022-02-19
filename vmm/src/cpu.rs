@@ -1402,12 +1402,32 @@ impl CpuManager {
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
+    fn set_regs(&self, cpu_id: u8, regs: &StandardRegisters) -> Result<()> {
+        self.vcpus[usize::from(cpu_id)]
+            .lock()
+            .unwrap()
+            .vcpu
+            .set_regs(regs)
+            .map_err(Error::CpuDebug)
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
     fn get_sregs(&self, cpu_id: u8) -> Result<SpecialRegisters> {
         self.vcpus[usize::from(cpu_id)]
             .lock()
             .unwrap()
             .vcpu
             .get_sregs()
+            .map_err(Error::CpuDebug)
+    }
+
+    #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
+    fn set_sregs(&self, cpu_id: u8, sregs: &SpecialRegisters) -> Result<()> {
+        self.vcpus[usize::from(cpu_id)]
+            .lock()
+            .unwrap()
+            .vcpu
+            .set_sregs(sregs)
             .map_err(Error::CpuDebug)
     }
 
@@ -1895,12 +1915,8 @@ impl Debuggable for CpuManager {
             // Update the lower 32-bit of rflags.
             rflags: (orig_gregs.rflags & !(u32::MAX as u64)) | (regs.eflags as u64),
         };
-        self.vcpus[cpu_id]
-            .lock()
-            .unwrap()
-            .vcpu
-            .set_regs(&gregs)
-            .map_err(Error::CpuDebug)
+
+        self.set_regs(cpu_id as u8, &gregs)
             .map_err(DebuggableError::WriteRegs)?;
 
         // Segment registers: CS, SS, DS, ES, FS, GS
@@ -1915,12 +1931,7 @@ impl Debuggable for CpuManager {
         sregs.fs.selector = regs.segments.fs as u16;
         sregs.gs.selector = regs.segments.gs as u16;
 
-        self.vcpus[cpu_id]
-            .lock()
-            .unwrap()
-            .vcpu
-            .set_sregs(&sregs)
-            .map_err(Error::CpuDebug)
+        self.set_sregs(cpu_id as u8, &sregs)
             .map_err(DebuggableError::WriteRegs)?;
 
         // TODO: Add other registers
