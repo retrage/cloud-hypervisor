@@ -1133,7 +1133,7 @@ impl cpu::Vcpu for KvmVcpu {
     fn set_guest_debug(
         &self,
         addrs: &[vm_memory::GuestAddress],
-        enable_singlestep: bool,
+        singlestep: bool,
     ) -> cpu::Result<()> {
         if addrs.len() > 4 {
             return Err(cpu::HypervisorCpuError::SetDebugRegs(anyhow!(
@@ -1146,7 +1146,7 @@ impl cpu::Vcpu for KvmVcpu {
             control: KVM_GUESTDBG_ENABLE | KVM_GUESTDBG_USE_HW_BP,
             ..Default::default()
         };
-        if enable_singlestep {
+        if singlestep {
             dbg.control |= KVM_GUESTDBG_SINGLESTEP;
         }
 

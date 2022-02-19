@@ -53,7 +53,7 @@ pub trait Debuggable: vm_migration::Pausable {
         &self,
         cpu_id: usize,
         addrs: &[GuestAddress],
-        enable_singlestep: bool,
+        singlestep: bool,
     ) -> Result<(), DebuggableError>;
     fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError>;
     fn debug_resume(&mut self) -> std::result::Result<(), DebuggableError>;
