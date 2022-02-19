@@ -1941,7 +1941,7 @@ impl Debuggable for CpuManager {
         while total_read < len as u64 {
             let paddr = self
                 .translate_gva(cpu_id as u8, vaddr.0 + total_read)
-                .map_err(DebuggableError::TranslateGVA)?;
+                .map_err(DebuggableError::TranslateGva)?;
             let psize = 0x1000;
             let read_len = std::cmp::min(len as u64 - total_read, psize - (paddr & (psize - 1)));
             self.vmmops
@@ -1968,7 +1968,7 @@ impl Debuggable for CpuManager {
         while total_written < data.len() as u64 {
             let paddr = self
                 .translate_gva(cpu_id as u8, vaddr.0 + total_written)
-                .map_err(DebuggableError::TranslateGVA)?;
+                .map_err(DebuggableError::TranslateGva)?;
             let psize = 0x1000;
             let write_len = std::cmp::min(
                 data.len() as u64 - total_written,

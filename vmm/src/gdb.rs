@@ -44,7 +44,7 @@ pub enum DebuggableError {
     WriteRegs(crate::cpu::Error),
     ReadMem(crate::cpu::Error),
     WriteMem(crate::cpu::Error),
-    TranslateGVA(crate::cpu::Error),
+    TranslateGva(crate::cpu::Error),
     PoisonedState,
 }
 
