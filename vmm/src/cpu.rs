@@ -1392,7 +1392,7 @@ impl CpuManager {
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
-    fn read_gregs(&self, cpu_id: u8) -> Result<StandardRegisters> {
+    fn get_regs(&self, cpu_id: u8) -> Result<StandardRegisters> {
         self.vcpus[usize::from(cpu_id)]
             .lock()
             .unwrap()
@@ -1829,7 +1829,7 @@ impl Debuggable for CpuManager {
     fn read_regs(&self, cpu_id: usize) -> std::result::Result<X86_64CoreRegs, DebuggableError> {
         // General registers: RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, r8-r15
         let gregs = self
-            .read_gregs(cpu_id as u8)
+            .get_regs(cpu_id as u8)
             .map_err(DebuggableError::ReadRegs)?;
         let regs = [
             gregs.rax, gregs.rbx, gregs.rcx, gregs.rdx, gregs.rsi, gregs.rdi, gregs.rbp, gregs.rsp,
@@ -1872,7 +1872,7 @@ impl Debuggable for CpuManager {
         regs: &X86_64CoreRegs,
     ) -> std::result::Result<(), DebuggableError> {
         let orig_gregs = self
-            .read_gregs(cpu_id as u8)
+            .get_regs(cpu_id as u8)
             .map_err(DebuggableError::ReadRegs)?;
         let gregs = StandardRegisters {
             rax: regs.regs[0],
