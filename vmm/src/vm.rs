@@ -2873,12 +2873,12 @@ impl Debuggable for Vm {
         &self,
         cpu_id: usize,
         addrs: &[GuestAddress],
-        enable_singlestep: bool,
+        singlestep: bool,
     ) -> std::result::Result<(), DebuggableError> {
         self.cpu_manager
             .lock()
             .unwrap()
-            .set_guest_debug(cpu_id, addrs, enable_singlestep)
+            .set_guest_debug(cpu_id, addrs, singlestep)
     }
 
     fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError> {

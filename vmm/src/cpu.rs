@@ -1780,13 +1780,13 @@ impl Debuggable for CpuManager {
         &self,
         cpu_id: usize,
         addrs: &[GuestAddress],
-        enable_singlestep: bool,
+        singlestep: bool,
     ) -> std::result::Result<(), DebuggableError> {
         self.vcpus[cpu_id]
             .lock()
             .unwrap()
             .vcpu
-            .set_guest_debug(addrs, enable_singlestep)
+            .set_guest_debug(addrs, singlestep)
             .map_err(Error::CpuDebug)
             .map_err(DebuggableError::SetDebug)
     }

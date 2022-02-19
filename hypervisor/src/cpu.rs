@@ -397,7 +397,7 @@ pub trait Vcpu: Send + Sync {
     ///
     /// Sets debug registers to set hardware breakpoints and/or enable single step.
     ///
-    fn set_guest_debug(&self, addrs: &[GuestAddress], enable_singlestep: bool) -> Result<()>;
+    fn set_guest_debug(&self, addrs: &[GuestAddress], singlestep: bool) -> Result<()>;
     ///
     /// Sets the type of CPU to be exposed to the guest and optional features.
     ///
