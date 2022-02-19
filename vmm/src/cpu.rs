@@ -1376,7 +1376,7 @@ impl CpuManager {
     }
 
     #[cfg(all(target_arch = "x86_64", feature = "gdb"))]
-    fn read_sregs(&self, cpu_id: u8) -> Result<SpecialRegisters> {
+    fn get_sregs(&self, cpu_id: u8) -> Result<SpecialRegisters> {
         self.vcpus[usize::from(cpu_id)]
             .lock()
             .unwrap()
@@ -1817,7 +1817,7 @@ impl Debuggable for CpuManager {
 
         // Segment registers: CS, SS, DS, ES, FS, GS
         let sregs = self
-            .read_sregs(cpu_id as u8)
+            .get_sregs(cpu_id as u8)
             .map_err(DebuggableError::ReadRegs)?;
         let segments = X86SegmentRegs {
             cs: sregs.cs.selector as u32,
@@ -1880,7 +1880,7 @@ impl Debuggable for CpuManager {
         // Segment registers: CS, SS, DS, ES, FS, GS
         // Since GDB care only selectors, we call get_sregs() first.
         let mut sregs = self
-            .read_sregs(cpu_id as u8)
+            .get_sregs(cpu_id as u8)
             .map_err(DebuggableError::ReadRegs)?;
         sregs.cs.selector = regs.segments.cs as u16;
         sregs.ss.selector = regs.segments.ss as u16;
