@@ -462,7 +462,7 @@ pub trait Vcpu: Send + Sync {
     ///
     /// Translate guest virtual address to guest physical address
     ///
-    fn translate_gva(&self, gva: u64) -> Result<u64>;
+    fn translate_gva(&self, gva: u64, flags: u64) -> Result<u64>;
     #[cfg(all(feature = "mshv", target_arch = "x86_64"))]
     ///
     /// Translate guest virtual address to guest physical address

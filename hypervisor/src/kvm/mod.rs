@@ -963,7 +963,7 @@ impl cpu::Vcpu for KvmVcpu {
     ///
     /// Translates guest virtual address to guest physical address using the `KVM_TRANSLATE` ioctl.
     ///
-    fn translate_gva(&self, gva: u64) -> cpu::Result<u64> {
+    fn translate_gva(&self, gva: u64, _flags: u64) -> cpu::Result<u64> {
         let tr = self
             .fd
             .translate_gva(gva)
