@@ -42,8 +42,8 @@ pub enum DebuggableError {
     Resume(vm_migration::MigratableError),
     ReadRegs(crate::cpu::Error),
     WriteRegs(crate::cpu::Error),
-    ReadMem(crate::cpu::Error),
-    WriteMem(crate::cpu::Error),
+    ReadMem(hypervisor::HypervisorVmError),
+    WriteMem(hypervisor::HypervisorVmError),
     TranslateGva(crate::cpu::Error),
     PoisonedState,
 }

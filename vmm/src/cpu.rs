@@ -1959,7 +1959,6 @@ impl Debuggable for CpuManager {
                     paddr,
                     &mut buf[total_read as usize..total_read as usize + read_len as usize],
                 )
-                .map_err(Error::VmDebug)
                 .map_err(DebuggableError::ReadMem)?;
             total_read += read_len;
         }
@@ -1989,7 +1988,6 @@ impl Debuggable for CpuManager {
                     paddr,
                     &data[total_written as usize..total_written as usize + write_len as usize],
                 )
-                .map_err(Error::VmDebug)
                 .map_err(DebuggableError::WriteMem)?;
             total_written += write_len;
         }
