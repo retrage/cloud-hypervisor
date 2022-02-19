@@ -254,7 +254,7 @@ pub fn start_vmm_thread(
     api_event: EventFd,
     api_sender: Sender<ApiRequest>,
     api_receiver: Receiver<ApiRequest>,
-    debug_path: Option<String>,
+    debug_path: Option<PathBuf>,
     debug_event: EventFd,
     vm_debug_event: EventFd,
     seccomp_action: &SeccompAction,
