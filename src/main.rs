@@ -67,6 +67,12 @@ enum Error {
     BareEventMonitor,
     #[error("Error doing event monitor I/O: {0}")]
     EventMonitorIo(std::io::Error),
+    #[cfg(feature = "gdb")]
+    #[error("Error parsing --gdb: {0}")]
+    ParsingGdb(option_parser::OptionParserError),
+    #[cfg(feature = "gdb")]
+    #[error("Error parsing --gdb: path required")]
+    BareGdb,
     #[error("Error creating log file: {0}")]
     LogFileCreation(std::io::Error),
     #[error("Error setting up logger: {0}")]
@@ -525,12 +531,24 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
 
     let hypervisor = hypervisor::new().map_err(Error::CreateHypervisor)?;
 
+    #[cfg(feature = "gdb")]
+    let gdb_socket_path = if let Some(gdb_config) = cmd_arguments.value_of("gdb") {
+        let mut parser = OptionParser::new();
+        parser.add("path");
+        parser.parse(gdb_config).map_err(Error::ParsingGdb)?;
+
+        if parser.is_set("path") {
+            Some(std::path::PathBuf::from(parser.get("path").unwrap()))
+        } else {
+            return Err(Error::BareGdb);
+        }
+    } else {
+        None
+    };
+    #[cfg(not(feature = "gdb"))]
+    let gdb_socket_path: Option<std::path::PathBuf> = None;
     let debug_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateDebugEventFd)?;
     let vm_debug_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateDebugEventFd)?;
-    #[cfg(feature = "gdb")]
-    let gdb_socket_path = cmd_arguments.value_of("gdb").map(String::from);
-    #[cfg(not(feature = "gdb"))]
-    let gdb_socket_path: Option<String> = None;
 
     let vmm_thread = vmm::start_vmm_thread(
         env!("CARGO_PKG_VERSION").to_string(),
@@ -539,7 +557,7 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
         api_evt.try_clone().unwrap(),
         http_sender,
         api_request_receiver,
-        gdb_socket_path.map(String::from),
+        gdb_socket_path,
         debug_evt.try_clone().unwrap(),
         vm_debug_evt.try_clone().unwrap(),
         &seccomp_action,
