@@ -1807,7 +1807,6 @@ impl Debuggable for CpuManager {
             .unwrap()
             .vcpu
             .set_guest_debug(addrs, singlestep)
-            .map_err(Error::CpuDebug)
             .map_err(DebuggableError::SetDebug)
     }
 
