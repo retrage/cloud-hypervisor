@@ -187,7 +187,11 @@ fn tid_to_cpuid(tid: Tid) -> usize {
 }
 
 fn cpuid_to_tid(cpu_id: usize) -> Tid {
-    Tid::new(cpu_id + 1).unwrap()
+    Tid::new(get_raw_tid(cpu_id)).unwrap()
+}
+
+pub fn get_raw_tid(cpu_id: usize) -> usize {
+    cpu_id + 1
 }
 
 impl MultiThreadBase for GdbStub {

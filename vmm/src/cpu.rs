@@ -14,7 +14,7 @@
 use crate::config::CpusConfig;
 use crate::device_manager::DeviceManager;
 #[cfg(feature = "gdb")]
-use crate::gdb::{Debuggable, DebuggableError};
+use crate::gdb::{get_raw_tid, Debuggable, DebuggableError};
 use crate::memory_manager::MemoryManager;
 use crate::seccomp_filters::{get_seccomp_filter, Thread};
 #[cfg(target_arch = "x86_64")]
@@ -921,8 +921,8 @@ impl CpuManager {
                                         #[cfg(feature = "gdb")]
                                         {
                                             vcpu_pause_signalled.store(true, Ordering::SeqCst);
-                                            let gdb_tid = u64::from(vcpu_id + 1);
-                                            vm_debug_evt.write(gdb_tid).unwrap();
+                                            let raw_tid = get_raw_tid(vcpu_id as usize);
+                                            vm_debug_evt.write(raw_tid as u64).unwrap();
                                         }
                                     }
                                     #[cfg(target_arch = "x86_64")]
