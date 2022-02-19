@@ -37,7 +37,7 @@ type ArchUsize = u64;
 
 #[derive(Debug)]
 pub enum DebuggableError {
-    SetDebug(crate::cpu::Error),
+    SetDebug(hypervisor::HypervisorCpuError),
     Pause(vm_migration::MigratableError),
     Resume(vm_migration::MigratableError),
     ReadRegs(crate::cpu::Error),
