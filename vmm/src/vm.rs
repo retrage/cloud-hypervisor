@@ -2883,7 +2883,7 @@ impl Debuggable for Vm {
 
     fn debug_pause(&mut self) -> std::result::Result<(), DebuggableError> {
         if !self.cpu_manager.lock().unwrap().vcpus_paused() {
-            Pausable::pause(self).map_err(DebuggableError::Pause)?;
+            self.pause().map_err(DebuggableError::Pause)?;
         }
         let mut state = self
             .state
@@ -2906,7 +2906,7 @@ impl Debuggable for Vm {
                     )))
                 })?;
         } else {
-            Pausable::resume(self).map_err(DebuggableError::Resume)?;
+            self.resume().map_err(DebuggableError::Resume)?;
         }
         let mut state = self
             .state
