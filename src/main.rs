@@ -32,6 +32,7 @@ use vmm_sys_util::signal::block_signal;
 enum Error {
     #[error("Failed to create API EventFd: {0}")]
     CreateApiEventFd(#[source] std::io::Error),
+    #[cfg(feature = "gdb")]
     #[error("Failed to create Debug EventFd: {0}")]
     CreateDebugEventFd(#[source] std::io::Error),
     #[cfg_attr(
@@ -545,9 +546,9 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
     } else {
         None
     };
-    #[cfg(not(feature = "gdb"))]
-    let gdb_socket_path: Option<std::path::PathBuf> = None;
+    #[cfg(feature = "gdb")]
     let debug_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateDebugEventFd)?;
+    #[cfg(feature = "gdb")]
     let vm_debug_evt = EventFd::new(EFD_NONBLOCK).map_err(Error::CreateDebugEventFd)?;
 
     let vmm_thread = vmm::start_vmm_thread(
@@ -557,8 +558,11 @@ fn start_vmm(cmd_arguments: ArgMatches) -> Result<Option<String>, Error> {
         api_evt.try_clone().unwrap(),
         http_sender,
         api_request_receiver,
+        #[cfg(feature = "gdb")]
         gdb_socket_path,
+        #[cfg(feature = "gdb")]
         debug_evt.try_clone().unwrap(),
+        #[cfg(feature = "gdb")]
         vm_debug_evt.try_clone().unwrap(),
         &seccomp_action,
         hypervisor,
