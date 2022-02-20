@@ -1827,6 +1827,10 @@ mod unit_tests {
         Vmm::new(
             "dummy".to_string(),
             EventFd::new(EFD_NONBLOCK).unwrap(),
+            #[cfg(feature = "gdb")]
+            EventFd::new(EFD_NONBLOCK).unwrap(),
+            #[cfg(feature = "gdb")]
+            EventFd::new(EFD_NONBLOCK).unwrap(),
             SeccompAction::Allow,
             hypervisor::new().unwrap(),
             EventFd::new(EFD_NONBLOCK).unwrap(),
@@ -1892,6 +1896,8 @@ mod unit_tests {
             watchdog: false,
             #[cfg(feature = "tdx")]
             tdx: None,
+            #[cfg(feature = "gdb")]
+            gdb: false,
             platform: None,
         }))
     }
